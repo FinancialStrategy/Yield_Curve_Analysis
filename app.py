@@ -438,16 +438,19 @@ with col_int1:
         else:
             level_status = "Moderate"
         
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">LEVEL FACTOR</div>
-                <div class="metric-value">{level_val:.2f}%</div>
-                <div class="metric-label">{level_status} long-term rate environment</div>
-            </div>
-            """, 
-            unsafe_allow_html=True
-        )
+        level_text = f"{level_val:.2f}%"
+status_text = f"{level_status} long-term rate environment"
+
+st.markdown(
+    f"""
+    <div class="metric-card">
+        <div class="metric-label">LEVEL FACTOR</div>
+        <div class="metric-value">{level_text}</div>
+        <div class="metric-label">{status_text}</div>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
 
 with col_int2:
     if 'Slope' in current_factors:
