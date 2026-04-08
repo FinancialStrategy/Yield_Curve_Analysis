@@ -490,12 +490,11 @@ st.plotly_chart(fig_pca_variance, use_container_width=True)
 
 # Cumulative variance
 cum_var = np.cumsum(pca_risk['explained_variance']) * 100
-st.markdown("""
-**Cumulative Variance Explained:**
-- PC1 + PC2: {:.1f}% of yield curve variation
-- PC1 + PC2 + PC3: {:.1f}% of yield curve variation
-""".format(cum_var[1], cum_var[2]))
-
+st.markdown(
+    "**Cumulative Variance Explained:**\n"
+    "- PC1 + PC2: {:.1f}% of yield curve variation\n"
+    "- PC1 + PC2 + PC3: {:.1f}% of yield curve variation".format(cum_var[1], cum_var[2])
+)
 # ===== TAB 7: RISK METRICS =====
 with tabs[6]:
 st.markdown("### Advanced Risk Metrics")
