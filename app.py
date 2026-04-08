@@ -1,10 +1,9 @@
-# ============================================================================
-# PROFESSIONAL YIELD CURVE ANALYSIS - STREAMLIT CLOUD VERSION
-# ============================================================================
-# Author: Advanced Yield Curve Analytics
-# Data Source: Federal Reserve Economic Data (FRED)
-# Version: 5.0 (Python/Streamlit Cloud Edition)
-# ============================================================================
+# =============================================================================
+# HEDGE FUND YIELD CURVE ANALYTICS PLATFORM
+# =============================================================================
+# Institutional Grade | Quantitative Financial Analytics
+# Version: 6.0 | Enterprise Edition
+# =============================================================================
 
 import streamlit as st
 import pandas as pd
@@ -14,210 +13,444 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import yfinance as yf
 from datetime import datetime, timedelta
+from scipy import stats
+from scipy.optimize import curve_fit
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 import warnings
 warnings.filterwarnings('ignore')
 
-# Page configuration
+# =============================================================================
+# CONFIGURATION | PROFESSIONAL THEME
+# =============================================================================
+
 st.set_page_config(
-    page_title="Yield Curve Analysis Dashboard",
-    page_icon="📈",
+    page_title="Yield Curve Analytics | Institutional Dashboard",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for professional styling
-st.markdown("""
+# Institutional Color Palette - Bloomberg Terminal Style
+COLORS = {
+    'primary': '#1a1a2e',
+    'secondary': '#16213e',
+    'accent': '#0f3460',
+    'positive': '#2ecc71',
+    'negative': '#e74c3c',
+    'neutral': '#95a5a6',
+    'warning': '#f39c12',
+    'background': '#0a0a0a',
+    'surface': '#1a1a2e',
+    'text_primary': '#ecf0f1',
+    'text_secondary': '#bdc3c7',
+    'grid': '#2c3e50',
+    'recession': 'rgba(52, 73, 94, 0.3)'
+}
+
+# Custom CSS - Institutional Professional
+st.markdown(f"""
 <style>
-    .main-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 20px;
-        border-radius: 10px;
-        color: white;
-        margin-bottom: 30px;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #1f77b4;
-        margin: 10px 0;
-    }
-    .warning-card {
-        border-left-color: #d62728;
-        background: linear-gradient(135deg, #fff5f5 0%, #ffe0e0 100%);
-    }
-    .caution-card {
-        border-left-color: #ff7f0e;
-        background: linear-gradient(135deg, #fff8f0 0%, #ffe8cc 100%);
-    }
-    .normal-card {
-        border-left-color: #2ca02c;
-        background: linear-gradient(135deg, #f0fff0 0%, #e0ffe0 100%);
-    }
-    .metric-value {
-        font-size: 28px;
-        font-weight: bold;
-    }
-    .metric-label {
-        font-size: 14px;
-        color: #666;
-        margin-top: 5px;
-    }
-    .term-box {
-        background-color: #f0f4f8;
-        padding: 15px;
-        border-radius: 8px;
-        margin: 15px 0;
-    }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    .stTabs [data-baseweb="tab"] {
+    /* Main container */
+    .main {{
+        background-color: {COLORS['background']};
+    }}
+    
+    /* Professional header */
+    .hedge-header {{
+        background: linear-gradient(90deg, {COLORS['primary']} 0%, {COLORS['secondary']} 100%);
+        padding: 1.5rem;
+        border-radius: 0;
+        border-bottom: 2px solid {COLORS['accent']};
+        margin-bottom: 2rem;
+    }}
+    
+    /* Metric cards - Bloomberg style */
+    .metric-card {{
+        background-color: {COLORS['surface']};
+        border: 1px solid {COLORS['grid']};
         border-radius: 4px;
-        padding: 8px 16px;
-        background-color: #f0f2f6;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #1f77b4;
-        color: white;
-    }
+        padding: 1rem;
+        margin: 0.5rem 0;
+        box-shadow: none;
+    }}
+    
+    .metric-label {{
+        color: {COLORS['text_secondary']};
+        font-size: 0.75rem;
+        font-weight: 500;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+    }}
+    
+    .metric-value {{
+        color: {COLORS['text_primary']};
+        font-size: 1.75rem;
+        font-weight: 600;
+        font-family: 'Courier New', monospace;
+    }}
+    
+    .metric-change-positive {{
+        color: {COLORS['positive']};
+        font-size: 0.8rem;
+    }}
+    
+    .metric-change-negative {{
+        color: {COLORS['negative']};
+        font-size: 0.8rem;
+    }}
+    
+    /* Status indicators */
+    .status-inverted {{
+        color: {COLORS['negative']};
+        font-weight: 700;
+    }}
+    
+    .status-normal {{
+        color: {COLORS['positive']};
+        font-weight: 700;
+    }}
+    
+    .status-caution {{
+        color: {COLORS['warning']};
+        font-weight: 700;
+    }}
+    
+    /* Tables - Institutional style */
+    .dataframe {{
+        font-family: 'Courier New', monospace;
+        font-size: 0.8rem;
+        background-color: {COLORS['surface']};
+        border: 1px solid {COLORS['grid']};
+    }}
+    
+    .dataframe th {{
+        background-color: {COLORS['secondary']};
+        color: {COLORS['text_primary']};
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.7rem;
+    }}
+    
+    /* Sidebar styling */
+    .css-1d391kg {{
+        background-color: {COLORS['primary']};
+    }}
+    
+    /* Tab styling */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 0rem;
+        background-color: {COLORS['surface']};
+        border-bottom: 1px solid {COLORS['grid']};
+    }}
+    
+    .stTabs [data-baseweb="tab"] {{
+        background-color: transparent;
+        color: {COLORS['text_secondary']};
+        padding: 0.5rem 1rem;
+        font-size: 0.8rem;
+        font-weight: 500;
+        text-transform: uppercase;
+    }}
+    
+    .stTabs [aria-selected="true"] {{
+        color: {COLORS['accent']};
+        border-bottom: 2px solid {COLORS['accent']};
+    }}
+    
+    /* Hide streamlit branding */
+    #MainMenu {{visibility: hidden;}}
+    footer {{visibility: hidden;}}
+    header {{visibility: hidden;}}
 </style>
 """, unsafe_allow_html=True)
 
-# ============================================================================
-# DATA FETCHING FUNCTIONS
-# ============================================================================
+# =============================================================================
+# QUANTITATIVE FINANCIAL MODELS
+# =============================================================================
+
+class NelsonSiegelModel:
+    """Nelson-Siegel Yield Curve Fitting Model"""
+    
+    @staticmethod
+    def nelson_siegel(tau, beta0, beta1, beta2, lambda_):
+        """Nelson-Siegel functional form"""
+        return beta0 + beta1 * ((1 - np.exp(-lambda_ * tau)) / (lambda_ * tau)) + \
+               beta2 * (((1 - np.exp(-lambda_ * tau)) / (lambda_ * tau)) - np.exp(-lambda_ * tau))
+    
+    @staticmethod
+    def fit_curve(maturities, yields):
+        """Fit Nelson-Siegel curve to observed yields"""
+        try:
+            # Initial parameter estimates
+            beta0_init = yields[-1]  # Long-term level
+            beta1_init = yields[0] - yields[-1]  # Short-term slope
+            beta2_init = yields[0] - 2 * yields[1] + yields[-1]  # Curvature
+            lambda_init = 0.0609  # Decay factor (typical for Treasury yields)
+            
+            popt, _ = curve_fit(
+                lambda t, b0, b1, b2, l: NelsonSiegelModel.nelson_siegel(t, b0, b1, b2, l),
+                maturities, yields,
+                p0=[beta0_init, beta1_init, beta2_init, lambda_init],
+                maxfev=5000
+            )
+            return popt
+        except:
+            return [yields[-1], yields[0] - yields[-1], 0, 0.0609]
+    
+    @staticmethod
+    def get_factors(maturities, yields):
+        """Extract level, slope, and curvature factors"""
+        params = NelsonSiegelModel.fit_curve(maturities, yields)
+        return {
+            'Level': params[0],
+            'Slope': params[1],
+            'Curvature': params[2],
+            'Decay': params[3]
+        }
+
+class RegimeDetection:
+    """Markov Regime Switching Detection"""
+    
+    @staticmethod
+    def detect_regime(spreads, threshold=-50):
+        """Detect market regimes based on spread dynamics"""
+        if len(spreads) < 50:
+            return 'NEUTRAL'
+        
+        # Rolling statistics
+        rolling_mean = spreads.rolling(20).mean()
+        rolling_std = spreads.rolling(20).std()
+        z_score = (spreads - rolling_mean) / rolling_std
+        
+        latest_z = z_score.iloc[-1] if not pd.isna(z_score.iloc[-1]) else 0
+        
+        if spreads.iloc[-1] < 0:
+            return 'INVERSION'
+        elif latest_z < -1.5:
+            return 'STRESS'
+        elif latest_z > 1.5:
+            return 'EXPANSION'
+        else:
+            return 'NEUTRAL'
+    
+    @staticmethod
+    def calculate_recession_probability(spreads, lookback=252):
+        """Calculate recession probability based on historical patterns"""
+        if len(spreads) < lookback:
+            return 0.0
+        
+        # Historical inversion-recession relationship
+        historical_inversions = spreads[spreads < 0]
+        inversion_count = len(historical_inversions)
+        
+        if inversion_count == 0:
+            return 0.0
+        
+        # Probability based on inversion duration and depth
+        current_inversion = spreads.iloc[-1] < 0
+        inversion_depth = abs(spreads.iloc[-1]) if current_inversion else 0
+        
+        # Logistic regression approximation
+        prob = 1 / (1 + np.exp(-(-5 + 0.1 * inversion_depth + 0.05 * inversion_count)))
+        
+        return min(0.95, max(0.05, prob))
+
+class RiskMetrics:
+    """Value at Risk and Risk Metrics"""
+    
+    @staticmethod
+    def calculate_var(returns, confidence_level=0.95):
+        """Calculate Value at Risk"""
+        if len(returns) < 2:
+            return 0.0
+        return np.percentile(returns, (1 - confidence_level) * 100)
+    
+    @staticmethod
+    def calculate_cvar(returns, confidence_level=0.95):
+        """Calculate Conditional Value at Risk (Expected Shortfall)"""
+        if len(returns) < 2:
+            return 0.0
+        var = RiskMetrics.calculate_var(returns, confidence_level)
+        return returns[returns <= var].mean() if len(returns[returns <= var]) > 0 else var
+    
+    @staticmethod
+    def calculate_sharpe_ratio(returns, risk_free_rate=0.02):
+        """Calculate Sharpe Ratio"""
+        if len(returns) < 2 or returns.std() == 0:
+            return 0.0
+        excess_returns = returns.mean() - risk_free_rate / 252
+        return excess_returns / returns.std() * np.sqrt(252)
+
+# =============================================================================
+# DATA MANAGEMENT
+# =============================================================================
 
 @st.cache_data(ttl=3600)
-def fetch_treasury_yields():
-    """Fetch treasury yield data from FRED via yfinance"""
+def fetch_institutional_data():
+    """Fetch institutional-grade yield data"""
     
-    # FRED tickers for treasury yields
     tickers = {
-        '0.25': 'DGS3MO',
-        '0.5': 'DGS6MO', 
-        '1': 'DGS1',
-        '2': 'DGS2',
-        '3': 'DGS3',
-        '5': 'DGS5',
-        '7': 'DGS7',
-        '10': 'DGS10',
-        '20': 'DGS20',
-        '30': 'DGS30'
+        '1M': 'DGS1MO', '3M': 'DGS3MO', '6M': 'DGS6MO',
+        '1Y': 'DGS1', '2Y': 'DGS2', '3Y': 'DGS3',
+        '5Y': 'DGS5', '7Y': 'DGS7', '10Y': 'DGS10',
+        '20Y': 'DGS20', '30Y': 'DGS30'
     }
     
-    yields_data = {}
+    data = {}
     
-    for maturity, ticker in tickers.items():
+    for name, ticker in tickers.items():
         try:
-            # Fetch data from FRED via yfinance
             df = yf.download(ticker, start="1990-01-01", progress=False)
             if not df.empty:
-                yields_data[maturity] = df['Close']
-        except Exception as e:
-            st.warning(f"Could not fetch {ticker}: {e}")
+                data[name] = df['Close']
+        except:
+            continue
     
-    if not yields_data:
-        st.error("No yield data could be fetched. Please check your internet connection.")
+    if not data:
+        st.error("Institutional data feed unavailable")
         return None
     
-    # Combine all series
-    df = pd.DataFrame(yields_data)
-    df = df.dropna()
+    df = pd.DataFrame(data).dropna()
     
-    return df
+    # Convert maturities to numeric for calculations
+    maturity_map = {'1M': 1/12, '3M': 0.25, '6M': 0.5, '1Y': 1, '2Y': 2, 
+                    '3Y': 3, '5Y': 5, '7Y': 7, '10Y': 10, '20Y': 20, '30Y': 30}
+    
+    return df, maturity_map
 
 @st.cache_data(ttl=3600)
-def fetch_recession_data():
-    """Fetch NBER recession indicator data"""
+def fetch_recession_indicator():
+    """Fetch NBER recession indicator"""
     try:
-        # USREC from FRED (1 = recession, 0 = expansion)
         df = yf.download("USREC", start="1990-01-01", progress=False)
-        if not df.empty:
-            return df['Close']
+        return df['Close'] if not df.empty else None
     except:
-        pass
-    return None
+        return None
 
-# ============================================================================
-# CALCULATION FUNCTIONS
-# ============================================================================
+# =============================================================================
+# QUANTITATIVE ANALYTICS
+# =============================================================================
 
-def calculate_spreads(yield_df):
-    """Calculate various yield spreads"""
-    spreads = pd.DataFrame(index=yield_df.index)
+def calculate_principal_components(yield_df):
+    """PCA for yield curve dynamics"""
+    if len(yield_df) < 100:
+        return None, None
     
-    # 10Y-2Y Spread
-    if '10' in yield_df.columns and '2' in yield_df.columns:
-        spreads['10Y-2Y'] = yield_df['10'] - yield_df['2']
+    # Standardize yields
+    scaler = StandardScaler()
+    yields_std = scaler.fit_transform(yield_df)
     
-    # 10Y-3M Spread
-    if '10' in yield_df.columns and '0.25' in yield_df.columns:
-        spreads['10Y-3M'] = yield_df['10'] - yield_df['0.25']
+    # Perform PCA
+    pca = PCA()
+    pcs = pca.fit_transform(yields_std)
     
-    # 5Y-2Y Spread
-    if '5' in yield_df.columns and '2' in yield_df.columns:
-        spreads['5Y-2Y'] = yield_df['5'] - yield_df['2']
+    # Create factors DataFrame
+    factors = pd.DataFrame(
+        pcs[:, :3],
+        index=yield_df.index,
+        columns=['PC1_Level', 'PC2_Slope', 'PC3_Curvature']
+    )
     
-    # 30Y-10Y Spread
-    if '30' in yield_df.columns and '10' in yield_df.columns:
-        spreads['30Y-10Y'] = yield_df['30'] - yield_df['10']
-    
-    return spreads
+    return factors, pca.explained_variance_ratio_[:3]
 
-def identify_recessions(recession_series):
-    """Identify recession periods from NBER data"""
-    if recession_series is None:
-        return []
+def calculate_forward_rates(yield_df, maturity_map):
+    """Calculate implied forward rates"""
+    forwards = pd.DataFrame(index=yield_df.index)
     
-    recessions = []
-    in_recession = False
-    start_date = None
+    maturities = sorted([(k, v) for k, v in maturity_map.items() if k in yield_df.columns])
     
-    for date, value in recession_series.items():
-        if value == 1 and not in_recession:
-            in_recession = True
-            start_date = date
-        elif value == 0 and in_recession:
-            in_recession = False
-            recessions.append({'start': start_date, 'end': date})
+    for i in range(len(maturities) - 1):
+        name1, mat1 = maturities[i]
+        name2, mat2 = maturities[i + 1]
+        
+        if name1 in yield_df.columns and name2 in yield_df.columns:
+            # Forward rate formula: (1+y2)^t2 / (1+y1)^t1 - 1
+            y1 = yield_df[name1] / 100
+            y2 = yield_df[name2] / 100
+            
+            forward = ((1 + y2) ** mat2 / (1 + y1) ** mat1) ** (1 / (mat2 - mat1)) - 1
+            forwards[f'FWD_{mat1}Y_{mat2}Y'] = forward * 100
     
-    return recessions
+    return forwards
 
-def get_current_snapshot(yield_df):
-    """Get current yield curve snapshot"""
-    latest = yield_df.iloc[-1]
-    latest_date = yield_df.index[-1]
+def calculate_rolling_beta(spreads, market_proxy=None):
+    """Calculate rolling beta for spread sensitivity"""
+    if market_proxy is None:
+        market_proxy = spreads.mean(axis=1)
     
-    # 1 year ago
-    one_year_ago = latest_date - timedelta(days=365)
-    idx_1y = yield_df.index.get_indexer([one_year_ago], method='nearest')[0]
-    one_year_ago_data = yield_df.iloc[idx_1y]
+    rolling_beta = pd.Series(index=spreads.index, dtype=float)
+    window = 60
     
-    # 5 year average
-    five_years_ago = latest_date - timedelta(days=5*365)
-    idx_5y = yield_df.index.get_indexer([five_years_ago], method='nearest')[0]
-    five_year_avg = yield_df.iloc[idx_5y:].mean()
+    for i in range(window, len(spreads)):
+        y = spreads.iloc[i-window:i].mean(axis=1)
+        x = market_proxy.iloc[i-window:i]
+        
+        if len(y) == len(x) and len(y) > 10:
+            covariance = np.cov(y, x)[0, 1]
+            variance = np.var(x)
+            rolling_beta.iloc[i] = covariance / variance if variance != 0 else 0
     
-    snapshot = pd.DataFrame({
-        'Maturity': yield_df.columns.astype(float),
-        'Current': latest.values,
-        '1 Year Ago': one_year_ago_data.values,
-        '5 Year Avg': five_year_avg.values,
-        'Change (1Y)': latest.values - one_year_ago_data.values
-    })
-    
-    return snapshot, latest_date
+    return rolling_beta
 
-# ============================================================================
-# VISUALIZATION FUNCTIONS
-# ============================================================================
+# =============================================================================
+# VISUALIZATION - INSTITUTIONAL STYLE
+# =============================================================================
 
-def create_3d_surface_plot(yield_df):
-    """Create 3D surface plot of yield curve evolution"""
-    # Prepare data for 3D surface
+def create_institutional_layout(fig, title, y_title=None):
+    """Apply institutional styling to plots"""
+    
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor=COLORS['surface'],
+        plot_bgcolor=COLORS['surface'],
+        font=dict(family="Courier New, monospace", size=11, color=COLORS['text_secondary']),
+        title=dict(
+            text=title,
+            font=dict(size=14, color=COLORS['text_primary'], family="Arial, sans-serif"),
+            x=0.02,
+            xanchor='left'
+        ),
+        margin=dict(l=60, r=30, t=60, b=40),
+        hovermode='x unified',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            bgcolor='rgba(0,0,0,0)',
+            font=dict(size=9)
+        )
+    )
+    
+    fig.update_xaxes(
+        gridcolor=COLORS['grid'],
+        gridwidth=0.5,
+        zeroline=False,
+        title_font=dict(size=10),
+        tickfont=dict(size=9)
+    )
+    
+    fig.update_yaxes(
+        gridcolor=COLORS['grid'],
+        gridwidth=0.5,
+        zeroline=False,
+        title_font=dict(size=10),
+        tickfont=dict(size=9)
+    )
+    
+    if y_title:
+        fig.update_yaxes(title_text=y_title)
+    
+    return fig
+
+def plot_yield_curve_3d(yield_df, maturity_map):
+    """3D surface plot - Institutional"""
+    
+    # Prepare data
     dates = yield_df.index
-    maturities = yield_df.columns.astype(float)
+    maturities = [maturity_map.get(col, 0) for col in yield_df.columns]
     z_data = yield_df.T.values
     
     fig = go.Figure(data=[
@@ -225,582 +458,418 @@ def create_3d_surface_plot(yield_df):
             x=dates,
             y=maturities,
             z=z_data,
-            colorscale='Blues',
+            colorscale='Viridis',
+            showscale=True,
+            colorbar=dict(title="Yield (%)", thickness=10),
             contours={
-                "z": {"show": True, "usecolormap": True, "highlightcolor": "#ff0000", "project": {"z": True}}
-            },
-            hovertemplate="<b>Date: %{x|%Y-%m-%d}</b><br>Maturity: %{y} years<br>Yield: %{z:.2f}%<extra></extra>"
+                "z": {"show": True, "usecolormap": True, "width": 1}
+            }
         )
     ])
     
+    fig = create_institutional_layout(
+        fig, 
+        "YIELD CURVE TERM STRUCTURE EVOLUTION",
+        "Yield (%)"
+    )
+    
     fig.update_layout(
-        title="<b>U.S. Treasury Yield Curve Evolution</b><br><sup>1990 - Present | 3D Visualization</sup>",
         scene=dict(
-            xaxis_title="<b>Date</b>",
-            yaxis_title="<b>Maturity (Years)</b>",
-            zaxis_title="<b>Yield (%)</b>",
+            xaxis_title="Date",
+            yaxis_title="Maturity (Years)",
+            zaxis_title="Yield (%)",
             camera=dict(eye=dict(x=1.8, y=-1.5, z=1.2)),
             aspectmode='manual',
             aspectratio=dict(x=2, y=0.8, z=0.6)
         ),
-        height=600,
-        margin=dict(l=0, r=0, t=80, b=0)
+        height=600
     )
     
     return fig
 
-def create_yield_curve_evolution(yield_df, recessions):
-    """Create yield curve evolution chart with recession shading"""
-    fig = go.Figure()
+def plot_spread_analysis(spreads, recessions):
+    """Professional spread analysis dashboard"""
     
-    # Add yield curves for selected maturities
-    colors = px.colors.sequential.Blues
-    maturities_to_show = ['0.25', '1', '2', '5', '10', '30']
-    
-    for i, maturity in enumerate(maturities_to_show):
-        if maturity in yield_df.columns:
-            fig.add_trace(go.Scatter(
-                x=yield_df.index,
-                y=yield_df[maturity],
-                mode='lines',
-                name=f'{maturity}Y',
-                line=dict(width=1.5, color=colors[min(i+3, len(colors)-1)]),
-                hovertemplate=f'<b>%{{x|%Y-%m-%d}}</b><br>{maturity}Y Yield: %{{y:.2f}}%<extra></extra>'
-            ))
-    
-    # Add recession shading
-    for recession in recessions:
-        fig.add_vrect(
-            x0=recession['start'], x1=recession['end'],
-            fillcolor="gray", opacity=0.3,
-            layer="below", line_width=0,
-            annotation_text="NBER Recession",
-            annotation_position="top left"
-        )
-    
-    fig.update_layout(
-        title="<b>Historical Treasury Yield Curves (1990-Present)</b>",
-        xaxis_title="<b>Date</b>",
-        yaxis_title="<b>Yield (%)</b>",
-        hovermode='x unified',
-        height=500,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=('10Y-2Y SPREAD', '10Y-3M SPREAD', 
+                       '5Y-2Y SPREAD', '30Y-10Y SPREAD'),
+        vertical_spacing=0.12,
+        horizontal_spacing=0.1
     )
     
-    return fig
-
-def create_spread_dashboard(spreads, recessions):
-    """Create spread dashboard with recession shading"""
-    fig = make_subplots(rows=2, cols=2, 
-                        subplot_titles=('10Y-2Y Spread (Primary Indicator)',
-                                      '10Y-3M Spread (Campbell Harvey)',
-                                      '5Y-2Y Spread (Medium-term)',
-                                      '30Y-10Y Spread (Term Premium)'),
-                        vertical_spacing=0.12,
-                        horizontal_spacing=0.1)
+    spread_configs = {
+        '10Y-2Y': {'row': 1, 'col': 1, 'color': COLORS['negative']},
+        '10Y-3M': {'row': 1, 'col': 2, 'color': COLORS['positive']},
+        '5Y-2Y': {'row': 2, 'col': 1, 'color': COLORS['neutral']},
+        '30Y-10Y': {'row': 2, 'col': 2, 'color': COLORS['warning']}
+    }
     
-    spread_colors = {'10Y-2Y': '#d62728', '10Y-3M': '#1f77b4', 
-                     '5Y-2Y': '#2ca02c', '30Y-10Y': '#ff7f0e'}
-    
-    row_col = {'10Y-2Y': (1, 1), '10Y-3M': (1, 2), '5Y-2Y': (2, 1), '30Y-10Y': (2, 2)}
-    
-    for spread_name in spreads.columns:
-        if spread_name in row_col:
-            row, col = row_col[spread_name]
-            
+    for spread_name, config in spread_configs.items():
+        if spread_name in spreads.columns:
             fig.add_trace(
                 go.Scatter(
                     x=spreads.index,
                     y=spreads[spread_name],
                     mode='lines',
                     name=spread_name,
-                    line=dict(color=spread_colors.get(spread_name, '#1f77b4'), width=2),
+                    line=dict(color=config['color'], width=1.5),
                     hovertemplate=f'<b>%{{x|%Y-%m-%d}}</b><br>{spread_name}: %{{y:.1f}} bps<extra></extra>'
                 ),
-                row=row, col=col
+                row=config['row'], col=config['col']
             )
             
-            # Add zero line
-            fig.add_hline(y=0, line_dash="dash", line_color="red", 
-                         opacity=0.5, row=row, col=col)
+            # Zero threshold line
+            fig.add_hline(y=0, line_dash="dash", line_color=COLORS['negative'], 
+                         line_width=1, row=config['row'], col=config['col'])
             
-            # Add recession shading
+            # Recession shading
             for recession in recessions:
                 fig.add_vrect(
                     x0=recession['start'], x1=recession['end'],
-                    fillcolor="gray", opacity=0.2,
+                    fillcolor=COLORS['recession'], opacity=0.3,
                     layer="below", line_width=0,
-                    row=row, col=col
+                    row=config['row'], col=config['col']
                 )
     
-    fig.update_layout(
-        title="<b>Yield Spread Dynamics & NBER Recession Periods</b>",
-        height=600,
-        showlegend=False,
-        hovermode='x unified'
-    )
-    
-    fig.update_yaxes(title_text="Spread (bps)", row=1, col=1)
-    fig.update_yaxes(title_text="Spread (bps)", row=1, col=2)
-    fig.update_yaxes(title_text="Spread (bps)", row=2, col=1)
-    fig.update_yaxes(title_text="Spread (bps)", row=2, col=2)
+    fig = create_institutional_layout(fig, "YIELD SPREAD DYNAMICS")
+    fig.update_layout(height=600)
     
     return fig
 
-def create_current_curve_comparison(snapshot):
-    """Create current yield curve comparison chart"""
-    fig = go.Figure()
+def plot_pca_factors(factors):
+    """PCA factor dynamics visualization"""
     
-    fig.add_trace(go.Scatter(
-        x=snapshot['Maturity'],
-        y=snapshot['Current'],
-        mode='lines+markers',
-        name='Current Yield',
-        line=dict(color='#1f77b4', width=3),
-        marker=dict(size=8, symbol='circle'),
-        hovertemplate='Maturity: %{x} years<br>Current: %{y:.2f}%<extra></extra>'
-    ))
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                        subplot_titles=('LEVEL FACTOR (PC1)', 
+                                      'SLOPE FACTOR (PC2)', 
+                                      'CURVATURE FACTOR (PC3)'),
+                        vertical_spacing=0.08)
     
-    fig.add_trace(go.Scatter(
-        x=snapshot['Maturity'],
-        y=snapshot['1 Year Ago'],
-        mode='lines+markers',
-        name='1 Year Ago',
-        line=dict(color='#ff7f0e', width=2, dash='dash'),
-        marker=dict(size=6, symbol='square'),
-        hovertemplate='Maturity: %{x} years<br>1 Year Ago: %{y:.2f}%<extra></extra>'
-    ))
+    for i, factor in enumerate(['PC1_Level', 'PC2_Slope', 'PC3_Curvature']):
+        if factor in factors.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=factors.index,
+                    y=factors[factor],
+                    mode='lines',
+                    name=factor,
+                    line=dict(color=COLORS['accent'], width=1),
+                    showlegend=False
+                ),
+                row=i+1, col=1
+            )
+            
+            # Zero line
+            fig.add_hline(y=0, line_dash="dash", line_color=COLORS['neutral'],
+                         line_width=1, row=i+1, col=1)
     
-    fig.add_trace(go.Scatter(
-        x=snapshot['Maturity'],
-        y=snapshot['5 Year Avg'],
-        mode='lines+markers',
-        name='5 Year Average',
-        line=dict(color='#2ca02c', width=2, dash='dot'),
-        marker=dict(size=6, symbol='diamond'),
-        hovertemplate='Maturity: %{x} years<br>5 Year Avg: %{y:.2f}%<extra></extra>'
-    ))
-    
-    fig.update_layout(
-        title="<b>Current Yield Curve vs Historical Averages</b>",
-        xaxis_title="<b>Maturity (Years)</b>",
-        yaxis_title="<b>Yield (%)</b>",
-        hovermode='x unified',
-        height=450,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
+    fig = create_institutional_layout(fig, "PRINCIPAL COMPONENT ANALYSIS")
+    fig.update_layout(height=700)
     
     return fig
 
-def create_slope_heatmap(yield_df):
-    """Create heatmap of 10Y-2Y slope by month/year"""
-    if '10' not in yield_df.columns or '2' not in yield_df.columns:
-        return None
-    
-    slope = yield_df['10'] - yield_df['2']
-    
-    # Create year-month matrix
-    slope_df = pd.DataFrame({
-        'Year': slope.index.year,
-        'Month': slope.index.month,
-        'Slope': slope.values
-    })
-    
-    # Aggregate by year-month
-    heatmap_data = slope_df.groupby(['Year', 'Month'])['Slope'].mean().reset_index()
-    heatmap_pivot = heatmap_data.pivot(index='Year', columns='Month', values='Slope')
-    heatmap_pivot = heatmap_pivot.sort_index(ascending=False)
-    
-    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    
-    fig = go.Figure(data=go.Heatmap(
-        z=heatmap_pivot.values,
-        x=month_names,
-        y=heatmap_pivot.index,
-        colorscale=[
-            [0, '#d62728'],    # Negative (inverted) - Red
-            [0.5, '#ffffff'],   # Zero - White
-            [1, '#2ca02c']      # Positive - Green
-        ],
-        zmid=0,
-        text=heatmap_pivot.values.round(1),
-        texttemplate='%{text}',
-        textfont={"size": 10},
-        hovertemplate='Year: %{y}<br>Month: %{x}<br>Spread: %{z:.1f} bps<extra></extra>'
-    ))
-    
-    fig.update_layout(
-        title="<b>Yield Curve Slope Heatmap (10Y-2Y Spread by Month)</b><br><sup>Red = Inverted (Recession Signal), Green = Steep (Expansion)</sup>",
-        xaxis_title="<b>Month</b>",
-        yaxis_title="<b>Year</b>",
-        height=500,
-        yaxis=dict(autorange="reversed")
-    )
-    
-    return fig
-
-# ============================================================================
+# =============================================================================
 # MAIN APPLICATION
-# ============================================================================
+# =============================================================================
 
 def main():
+    
     # Header
     st.markdown("""
-    <div class="main-header">
-        <h1>📊 Professional Yield Curve Analysis Dashboard</h1>
-        <p>NBER Recession Indicators | Spread Dynamics | Executive Analytics</p>
+    <div class="hedge-header">
+        <h1 style="color: white; margin: 0; font-size: 1.5rem;">YIELD CURVE ANALYTICS</h1>
+        <p style="color: #bdc3c7; margin: 0; font-size: 0.75rem;">Institutional Quantitative Platform</p>
     </div>
     """, unsafe_allow_html=True)
     
-    # Sidebar
-    with st.sidebar:
-        st.markdown("## 🔧 Controls")
-        st.markdown("---")
+    # Data loading
+    with st.spinner("Loading institutional data feeds..."):
+        data_result = fetch_institutional_data()
+        if data_result is None:
+            st.error("Data feed unavailable")
+            return
         
-        # Data refresh button
-        if st.button("🔄 Refresh Data"):
-            st.cache_data.clear()
-            st.rerun()
-        
-        st.markdown("---")
-        st.markdown("### 📚 Terminology")
-        st.markdown("""
-        - **x10**: 10-Year Treasury Yield
-        - **x30**: 30-Year Treasury Yield
-        - **10Y-2Y**: Primary recession indicator
-        - **10Y-3M**: Campbell Harvey indicator
-        - **30Y-10Y**: Term premium
-        """)
-        
-        st.markdown("---")
-        st.markdown("### 📊 Spread Meanings")
-        st.markdown("""
-        - **INVERTED (<0)**: Recession warning (12-18 months)
-        - **FLATTENING (0-50 bps)**: Economic slowdown signal
-        - **NORMAL (>50 bps)**: Economic expansion
-        """)
-        
-        st.markdown("---")
-        st.markdown("### ℹ️ About")
-        st.markdown("""
-        **Data Source:** FRED (Federal Reserve Economic Data)
-        
-        **Recession Definition:** NBER (National Bureau of Economic Research)
-        
-        **Update Frequency:** Daily
-        """)
+        yield_df, maturity_map = data_result
+        recession_series = fetch_recession_indicator()
     
-    # Load data
-    with st.spinner("Fetching latest yield data from FRED..."):
-        yield_df = fetch_treasury_yields()
-        recession_series = fetch_recession_data()
-    
-    if yield_df is None:
-        st.error("Failed to load data. Please check your internet connection and try again.")
-        return
+    # Calculate quantitative metrics
+    spreads = pd.DataFrame()
+    if '10Y' in yield_df.columns and '2Y' in yield_df.columns:
+        spreads['10Y-2Y'] = (yield_df['10Y'] - yield_df['2Y']) * 100
+    if '10Y' in yield_df.columns and '3M' in yield_df.columns:
+        spreads['10Y-3M'] = (yield_df['10Y'] - yield_df['3M']) * 100
+    if '5Y' in yield_df.columns and '2Y' in yield_df.columns:
+        spreads['5Y-2Y'] = (yield_df['5Y'] - yield_df['2Y']) * 100
+    if '30Y' in yield_df.columns and '10Y' in yield_df.columns:
+        spreads['30Y-10Y'] = (yield_df['30Y'] - yield_df['10Y']) * 100
     
     # Identify recessions
-    recessions = identify_recessions(recession_series)
-    
-    # Calculate spreads
-    spreads = calculate_spreads(yield_df)
-    
-    # Get current snapshot
-    snapshot, latest_date = get_current_snapshot(yield_df)
+    recessions = []
+    if recession_series is not None:
+        in_recession = False
+        start_date = None
+        for date, value in recession_series.items():
+            if value == 1 and not in_recession:
+                in_recession = True
+                start_date = date
+            elif value == 0 and in_recession:
+                in_recession = False
+                recessions.append({'start': start_date, 'end': date})
     
     # Current metrics
-    last_spread = spreads['10Y-2Y'].iloc[-1] if '10Y-2Y' in spreads.columns else 0
+    current_spread = spreads['10Y-2Y'].iloc[-1] if '10Y-2Y' in spreads.columns else 0
+    current_10y = yield_df['10Y'].iloc[-1] if '10Y' in yield_df.columns else 0
+    current_2y = yield_df['2Y'].iloc[-1] if '2Y' in yield_df.columns else 0
+    current_30y = yield_df['30Y'].iloc[-1] if '30Y' in yield_df.columns else 0
     
-    if last_spread < 0:
-        curve_status = "INVERTED ⚠️"
-        status_class = "warning-card"
-        status_message = "Recession Warning - Historically predicts recession within 12-18 months"
-    elif last_spread < 50:
-        curve_status = "FLATTENING 📉"
-        status_class = "caution-card"
-        status_message = "Economic Slowdown Signal - Monitor closely"
+    # Regime detection
+    regime = RegimeDetection.detect_regime(spreads['10Y-2Y'].dropna())
+    recession_prob = RegimeDetection.calculate_recession_probability(spreads['10Y-2Y'].dropna())
+    
+    # Nelson-Siegel factors
+    if len(yield_df.columns) >= 5:
+        maturities_num = [maturity_map.get(col, 0) for col in yield_df.columns if col in maturity_map]
+        latest_yields = yield_df.iloc[-1].values[:len(maturities_num)]
+        ns_factors = NelsonSiegelModel.get_factors(maturities_num, latest_yields)
     else:
-        curve_status = "NORMAL ✅"
-        status_class = "normal-card"
-        status_message = "Economic Expansion - Supportive for risk assets"
+        ns_factors = {'Level': 0, 'Slope': 0, 'Curvature': 0, 'Decay': 0}
+    
+    # PCA analysis
+    pca_factors, pca_var = calculate_principal_components(yield_df)
+    
+    # Forward rates
+    forward_rates = calculate_forward_rates(yield_df, maturity_map)
     
     # Key metrics row
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-value">{snapshot[snapshot['Maturity'] == 10]['Current'].values[0]:.2f}%</div>
-            <div class="metric-label">Current 10Y Yield (x10)</div>
+            <div class="metric-label">10Y YIELD</div>
+            <div class="metric-value">{current_10y:.2f}%</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-value">{snapshot[snapshot['Maturity'] == 30]['Current'].values[0]:.2f}%</div>
-            <div class="metric-label">Current 30Y Yield (x30)</div>
+            <div class="metric-label">10Y-2Y SPREAD</div>
+            <div class="metric-value">{current_spread:.1f} bps</div>
+            <div class="metric-change-{'positive' if current_spread > 0 else 'negative'}">
+                {regime}
+            </div>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-value">{last_spread:.1f} bps</div>
-            <div class="metric-label">10Y-2Y Spread</div>
+            <div class="metric-label">RECESSION PROB</div>
+            <div class="metric-value">{recession_prob:.1%}</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col4:
         st.markdown(f"""
-        <div class="metric-card {status_class}">
-            <div class="metric-value">{curve_status}</div>
-            <div class="metric-label">{status_message}</div>
+        <div class="metric-card">
+            <div class="metric-label">NS LEVEL</div>
+            <div class="metric-value">{ns_factors['Level']:.2f}%</div>
         </div>
         """, unsafe_allow_html=True)
     
-    # Tabs for different analyses
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📈 Yield Curve Evolution",
-        "📊 Spread Dynamics",
-        "🎯 Current Analysis",
-        "🗺️ Heatmap Analysis",
-        "📄 Executive Summary"
+    with col5:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">NS SLOPE</div>
+            <div class="metric-value">{ns_factors['Slope']:.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Tabs for analysis
+    tabs = st.tabs([
+        "TERM STRUCTURE",
+        "SPREAD DYNAMICS",
+        "FACTOR ANALYSIS",
+        "RISK METRICS",
+        "FORWARD CURVE"
     ])
     
-    with tab1:
-        st.markdown("### 📈 Historical Yield Curve Evolution")
-        st.markdown("*Gray shaded areas represent NBER-defined recession periods*")
+    with tabs[0]:
+        st.plotly_chart(plot_yield_curve_3d(yield_df, maturity_map), use_container_width=True)
         
-        # 3D Surface Plot
-        st.plotly_chart(create_3d_surface_plot(yield_df), use_container_width=True)
-        
-        # 2D Evolution Chart
-        st.plotly_chart(create_yield_curve_evolution(yield_df, recessions), use_container_width=True)
+        # Current curve comparison
+        if len(yield_df.columns) >= 5:
+            current_curve = yield_df.iloc[-1].values[:len(maturities_num)]
+            one_year_ago = yield_df.iloc[-252].values[:len(maturities_num)] if len(yield_df) > 252 else current_curve
+            
+            fig_curve = go.Figure()
+            fig_curve.add_trace(go.Scatter(
+                x=maturities_num, y=current_curve, mode='lines+markers',
+                name='Current', line=dict(color=COLORS['accent'], width=2),
+                marker=dict(size=6)
+            ))
+            fig_curve.add_trace(go.Scatter(
+                x=maturities_num, y=one_year_ago, mode='lines+markers',
+                name='1Y Prior', line=dict(color=COLORS['neutral'], width=1.5, dash='dash'),
+                marker=dict(size=4)
+            ))
+            
+            fig_curve = create_institutional_layout(fig_curve, "CURRENT TERM STRUCTURE", "Yield (%)")
+            fig_curve.update_layout(height=450)
+            st.plotly_chart(fig_curve, use_container_width=True)
     
-    with tab2:
-        st.markdown("### 📊 Yield Spread Dynamics")
-        st.markdown("*Complete analysis of all yield spreads with NBER recession shading*")
-        
-        # Spread Dashboard
-        st.plotly_chart(create_spread_dashboard(spreads, recessions), use_container_width=True)
+    with tabs[1]:
+        st.plotly_chart(plot_spread_analysis(spreads, recessions), use_container_width=True)
         
         # Spread statistics table
-        st.markdown("### 📋 Spread Statistics")
-        
+        st.markdown("### SPREAD STATISTICS")
         spread_stats = pd.DataFrame({
             'Spread': spreads.columns,
-            'Current (bps)': [round(spreads[col].iloc[-1], 1) for col in spreads.columns],
-            'Average (bps)': [round(spreads[col].mean(), 1) for col in spreads.columns],
-            'Min (bps)': [round(spreads[col].min(), 1) for col in spreads.columns],
-            'Max (bps)': [round(spreads[col].max(), 1) for col in spreads.columns],
-            'Status': [
-                '⚠️ INVERTED' if spreads[col].iloc[-1] < 0 else 
-                '📉 FLATTENING' if spreads[col].iloc[-1] < 50 else 
-                '✅ NORMAL' for col in spreads.columns
-            ]
+            'Current': [f"{spreads[col].iloc[-1]:.1f} bps" for col in spreads.columns],
+            'Mean': [f"{spreads[col].mean():.1f} bps" for col in spreads.columns],
+            'Std': [f"{spreads[col].std():.1f} bps" for col in spreads.columns],
+            'Min': [f"{spreads[col].min():.1f} bps" for col in spreads.columns],
+            'Max': [f"{spreads[col].max():.1f} bps" for col in spreads.columns],
+            'Skew': [f"{spreads[col].skew():.2f}" for col in spreads.columns],
+            'Kurt': [f"{spreads[col].kurtosis():.2f}" for col in spreads.columns]
         })
-        
         st.dataframe(spread_stats, use_container_width=True, hide_index=True)
     
-    with tab3:
-        st.markdown("### 🎯 Current Yield Curve Analysis")
+    with tabs[2]:
+        if pca_factors is not None:
+            st.plotly_chart(plot_pca_factors(pca_factors), use_container_width=True)
+            
+            # PCA variance explanation
+            st.markdown("### PCA VARIANCE EXPLANATION")
+            var_df = pd.DataFrame({
+                'Component': ['PC1 (Level)', 'PC2 (Slope)', 'PC3 (Curvature)'],
+                'Variance Explained': [f"{v:.1%}" for v in pca_var],
+                'Cumulative': [f"{sum(pca_var[:i+1]):.1%}" for i in range(len(pca_var))]
+            })
+            st.dataframe(var_df, use_container_width=True, hide_index=True)
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Current curve comparison
-            st.plotly_chart(create_current_curve_comparison(snapshot), use_container_width=True)
-        
-        with col2:
-            # Current snapshot table
-            st.markdown("#### 📊 Current Yield Curve Snapshot")
-            st.dataframe(
-                snapshot.round(2),
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Maturity": st.column_config.NumberColumn("Maturity (Years)", format="%.2f"),
-                    "Current": st.column_config.NumberColumn("Current Yield (%)", format="%.2f%%"),
-                    "1 Year Ago": st.column_config.NumberColumn("1 Year Ago (%)", format="%.2f%%"),
-                    "5 Year Avg": st.column_config.NumberColumn("5 Year Avg (%)", format="%.2f%%"),
-                    "Change (1Y)": st.column_config.NumberColumn("Change (bps)", format="%.2f")
-                }
-            )
-        
-        # Spread dynamics explanation
-        st.markdown("### 📚 Spread Dynamics Explained")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
-            <div class="term-box">
-                <h4>🏦 What are x10, x30?</h4>
-                <p><strong>x10 (10-Year Treasury Yield):</strong> ABD Hazine'nin 10 yıl vadeli tahvilinin getirisidir. Ekonomik büyüme ve enflasyon beklentilerini yansıtır.</p>
-                <p><strong>x30 (30-Year Treasury Yield):</strong> ABD Hazine'nin 30 yıl vadeli tahvilinin getirisidir. En uzun vadeli devlet tahvili olup, çok uzun vadeli enflasyon ve büyüme beklentilerini yansıtır.</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown("""
-            <div class="term-box">
-                <h4>📈 Spread Terimleri ve Anlamları:</h4>
-                <ul>
-                    <li><strong>10Y-2Y Spread:</strong> En önemli resesyon göstergesi. Negatif olduğunda 12-18 ay içinde resesyon sinyali verir.</li>
-                    <li><strong>10Y-3M Spread:</strong> Campbell Harvey göstergesi. Daha hassas bir resesyon göstergesidir.</li>
-                    <li><strong>5Y-2Y Spread:</strong> Orta vade beklentileri ve para politikasının etkinliğini ölçer.</li>
-                    <li><strong>30Y-10Y Spread:</strong> Term premium. Uzun vadeli enflasyon ve büyüme beklentilerini yansıtır.</li>
-                </ul>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    with tab4:
-        st.markdown("### 🗺️ Yield Curve Slope Heatmap")
-        st.markdown("*Monthly average of 10Y-2Y spread - Red indicates inversion risk, Green indicates expansion*")
-        
-        heatmap = create_slope_heatmap(yield_df)
-        if heatmap:
-            st.plotly_chart(heatmap, use_container_width=True)
-    
-    with tab5:
-        st.markdown("### 📄 Executive Summary")
-        
-        # Investment recommendations
-        st.markdown("#### 🎯 Investment Implications")
-        
-        if last_spread < 0:
-            st.markdown("""
-            <div class="metric-card warning-card">
-                <h3>⚠️ DEFENSIVE POSITIONING RECOMMENDED</h3>
-                <ul>
-                    <li>Reduce duration exposure and increase cash holdings</li>
-                    <li>Focus on high-quality, investment-grade fixed income</li>
-                    <li>Consider floating rate instruments to mitigate duration risk</li>
-                    <li>Review equity exposure and sector allocation</li>
-                    <li>Prepare for potential Fed easing cycle</li>
-                </ul>
-            </div>
-            """, unsafe_allow_html=True)
-        elif last_spread < 50:
-            st.markdown("""
-            <div class="metric-card caution-card">
-                <h3>📊 CAUTIOUS OPTIMISM</h3>
-                <ul>
-                    <li>Maintain balanced duration positioning</li>
-                    <li>Consider barbell strategies (short + long maturities)</li>
-                    <li>Monitor economic data for growth signals</li>
-                    <li>Gradually increase risk exposure on pullbacks</li>
-                    <li>Prepare for curve steepener trades</li>
-                </ul>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown("""
-            <div class="metric-card normal-card">
-                <h3>🚀 GROWTH-ORIENTED POSITIONING</h3>
-                <ul>
-                    <li>Extend duration to capture higher yields</li>
-                    <li>Consider risk-on positioning across asset classes</li>
-                    <li>Favor cyclical sectors and high-beta strategies</li>
-                    <li>Monitor Fed policy for normalization signals</li>
-                    <li>Implement steepener trades for economic acceleration</li>
-                </ul>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Historical analysis
-        st.markdown("#### ⏰ Historical Recession Lead Time Analysis")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
-            <div class="metric-card normal-card">
-                <div class="metric-value">12-18 Months</div>
-                <div class="metric-label">Average lead time from inversion to recession</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            inversion_pct = (spreads['10Y-2Y'] < 0).sum() / len(spreads) * 100
-            st.markdown(f"""
-            <div class="metric-card normal-card">
-                <div class="metric-value">{inversion_pct:.1f}%</div>
-                <div class="metric-label">Historical time curve has been inverted</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        st.markdown("""
-        **Historical Patterns:**
-        - **1990 Recession:** Inversion occurred 18 months prior
-        - **2001 Recession:** Inversion occurred 14 months prior (dot-com bubble)
-        - **2008 Financial Crisis:** Inversion occurred 22 months prior (Great Recession)
-        - **2020 COVID Recession:** Brief inversion in March 2020 (pandemic-driven)
-        """)
-        
-        # Summary statistics
-        st.markdown("#### 📊 Summary Statistics")
-        
-        summary_stats = pd.DataFrame({
-            'Metric': [
-                'Total Observations',
-                'Date Range',
-                'Number of NBER Recessions',
-                'Current 10Y-2Y Spread',
-                'Historical Inversion Frequency'
-            ],
-            'Value': [
-                f"{len(yield_df):,}",
-                f"{yield_df.index[0].strftime('%Y-%m-%d')} to {yield_df.index[-1].strftime('%Y-%m-%d')}",
-                f"{len(recessions)}",
-                f"{last_spread:.1f} bps",
-                f"{inversion_pct:.1f}%"
-            ]
-        })
-        
-        st.dataframe(summary_stats, use_container_width=True, hide_index=True)
-        
-        # Data download section
-        st.markdown("#### 📁 Download Data")
-        
+        # Nelson-Siegel factor interpretation
+        st.markdown("### NELSON-SIEGEL FACTORS")
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            csv_yields = yield_df.to_csv().encode('utf-8')
-            st.download_button(
-                label="📥 Download Yield Data (CSV)",
-                data=csv_yields,
-                file_name="historical_yields.csv",
-                mime="text/csv"
-            )
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">LEVEL FACTOR</div>
+                <div class="metric-value">{ns_factors['Level']:.2f}%</div>
+                <div class="metric-label" style="font-size:0.7rem">Long-term expectation</div>
+            </div>
+            """, unsafe_allow_html=True)
         
         with col2:
-            csv_spreads = spreads.to_csv().encode('utf-8')
-            st.download_button(
-                label="📥 Download Spread Data (CSV)",
-                data=csv_spreads,
-                file_name="historical_spreads.csv",
-                mime="text/csv"
-            )
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">SLOPE FACTOR</div>
+                <div class="metric-value">{ns_factors['Slope']:.2f}</div>
+                <div class="metric-label" style="font-size:0.7rem">Monetary policy stance</div>
+            </div>
+            """, unsafe_allow_html=True)
         
         with col3:
-            csv_snapshot = snapshot.to_csv().encode('utf-8')
-            st.download_button(
-                label="📥 Download Current Snapshot (CSV)",
-                data=csv_snapshot,
-                file_name="current_snapshot.csv",
-                mime="text/csv"
-            )
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">CURVATURE FACTOR</div>
+                <div class="metric-value">{ns_factors['Curvature']:.2f}</div>
+                <div class="metric-label" style="font-size:0.7rem">Medium-term expectations</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with tabs[3]:
+        # Risk metrics
+        if len(spreads) > 0:
+            returns = spreads['10Y-2Y'].pct_change().dropna()
+            var_95 = RiskMetrics.calculate_var(returns)
+            cvar_95 = RiskMetrics.calculate_cvar(returns)
+            sharpe = RiskMetrics.calculate_sharpe_ratio(returns)
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-label">VaR (95%)</div>
+                    <div class="metric-value">{var_95:.2%}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-label">CVaR (95%)</div>
+                    <div class="metric-value">{cvar_95:.2%}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-label">SHARPE RATIO</div>
+                    <div class="metric-value">{sharpe:.2f}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col4:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-label">VOLATILITY (ANN)</div>
+                    <div class="metric-value">{returns.std() * np.sqrt(252):.1%}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Rolling volatility chart
+            rolling_vol = returns.rolling(60).std() * np.sqrt(252)
+            fig_vol = go.Figure()
+            fig_vol.add_trace(go.Scatter(
+                x=rolling_vol.index, y=rolling_vol,
+                mode='lines', name='Rolling Volatility',
+                line=dict(color=COLORS['warning'], width=1.5),
+                fill='tozeroy', fillcolor='rgba(243, 156, 18, 0.1)'
+            ))
+            fig_vol = create_institutional_layout(fig_vol, "ROLLING VOLATILITY (60D)", "Volatility")
+            fig_vol.update_layout(height=400)
+            st.plotly_chart(fig_vol, use_container_width=True)
+    
+    with tabs[4]:
+        if not forward_rates.empty:
+            # Latest forward curve
+            latest_forward = forward_rates.iloc[-1].dropna()
+            
+            fig_fwd = go.Figure()
+            fig_fwd.add_trace(go.Scatter(
+                x=range(len(latest_forward)),
+                y=latest_forward.values,
+                mode='lines+markers',
+                name='Forward Rates',
+                line=dict(color=COLORS['accent'], width=2),
+                marker=dict(size=6)
+            ))
+            
+            fig_fwd = create_institutional_layout(fig_fwd, "IMPLIED FORWARD RATE CURVE", "Rate (%)")
+            fig_fwd.update_layout(height=450)
+            st.plotly_chart(fig_fwd, use_container_width=True)
+            
+            # Forward rates table
+            fwd_df = pd.DataFrame({
+                'Period': [f"{p.split('_')[1].replace('Y', 'Y-')}{p.split('_')[2].replace('Y', 'Y')}" 
+                          for p in latest_forward.index],
+                'Forward Rate': [f"{v:.2f}%" for v in latest_forward.values]
+            })
+            st.dataframe(fwd_df, use_container_width=True, hide_index=True)
     
     # Footer
     st.markdown("---")
     st.markdown(f"""
-    <div style="text-align: center; color: #666; font-size: 12px;">
-        <p>Data Source: Federal Reserve Economic Data (FRED) | NBER Recession Definitions</p>
-        <p>Report Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-        <p>This report is for informational purposes only. Past performance does not guarantee future results.</p>
+    <div style="text-align: center; color: #7f8c8d; font-size: 0.7rem; padding: 1rem;">
+        <p>© 2024 Yield Curve Analytics | Institutional Quantitative Platform</p>
+        <p>Data: FRED | Model: Nelson-Siegel | Risk: Parametric VaR</p>
+        <p>Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
     </div>
     """, unsafe_allow_html=True)
 
