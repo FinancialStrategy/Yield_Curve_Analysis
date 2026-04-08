@@ -511,25 +511,18 @@ if '10Y' in yield_df.columns:
     st.markdown("""
     **10Y Treasury Yield Risk (95% confidence, 10-day horizon)**
     
-    | Metric | Value | Interpretation |
-    |--------|-------|----------------|
-    | Historical VaR | {:.4f} | Worst expected loss |
-    | Parametric VaR | {:.4f} | Normal distribution assumption |
-    | Cornish-Fisher VaR | {:.4f} | Adjusted for skewness/kurtosis |
-    | CVaR (Expected Shortfall) | {:.4f} | Average loss beyond VaR |
-    | Tail Ratio | {:.2f} | CVaR/VaR ratio |
-    | Skewness | {:.3f} | Distribution asymmetry |
-    | Excess Kurtosis | {:.3f} | Tail thickness |
-    """.format(
-        var_metrics['VaR_Historical'],
-        var_metrics['VaR_Parametric'],
-        var_metrics['VaR_CornishFisher'],
-        var_metrics['CVaR'],
-        var_metrics['tail_ratio'],
-        var_metrics['skewness'],
-        var_metrics['kurtosis']
-    ))
-    
+    st.markdown("**10Y Treasury Yield Risk (95% confidence, 10-day horizon)**")
+st.markdown("")
+st.markdown("| Metric | Value | Interpretation |")
+st.markdown("|--------|-------|----------------|")
+st.markdown("| Historical VaR | {:.4f} | Worst expected loss |".format(var_metrics['VaR_Historical']))
+st.markdown("| Parametric VaR | {:.4f} | Normal distribution assumption |".format(var_metrics['VaR_Parametric']))
+st.markdown("| Cornish-Fisher VaR | {:.4f} | Adjusted for skewness/kurtosis |".format(var_metrics['VaR_CornishFisher']))
+st.markdown("| CVaR (Expected Shortfall) | {:.4f} | Average loss beyond VaR |".format(var_metrics['CVaR']))
+st.markdown("| Tail Ratio | {:.2f} | CVaR/VaR ratio |".format(var_metrics['tail_ratio']))
+st.markdown("| Skewness | {:.3f} | Distribution asymmetry |".format(var_metrics['skewness']))
+st.markdown("| Excess Kurtosis | {:.3f} | Tail thickness |".format(var_metrics['kurtosis']))
+                               
     # Return distribution
     fig_returns = go.Figure()
     fig_returns.add_trace(go.Histogram(
