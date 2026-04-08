@@ -2,7 +2,7 @@
 # HEDGE FUND YIELD CURVE ANALYTICS PLATFORM
 # EXECUTIVE SUMMARY REPORT - INSTITUTIONAL GRADE
 # =============================================================================
-# Version: 25.0 | Executive Summary Focus | No Shortening | Full Implementation
+# Version: 26.0 | Executive Summary Focus | No Shortening | Full Implementation
 # Includes: Nelson-Siegel, Svensson, Dynamic Analysis, Risk Metrics, Arbitrage Detection
 # Executive Summary Focus: 2Y and 10Y Dynamic Charts with Interactive Time Range
 # NBER Recession: Complete recession period analysis with detailed tables
@@ -30,6 +30,7 @@ from sklearn.gaussian_process.kernels import RBF, WhiteKernel, Matern
 import requests
 import time
 import yfinance as yf
+import talib as ta
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -128,10 +129,8 @@ if 'pca_risk' not in st.session_state:
 st.markdown(
     f"""
     <style>
-    /* Import premium institutional fonts */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
     
-    /* Global font settings */
     * {{
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }}
@@ -334,7 +333,6 @@ st.markdown(
         font-size: 0.7rem;
     }}
     
-    /* Custom scrollbar */
     ::-webkit-scrollbar {{
         width: 6px;
         height: 6px;
@@ -446,7 +444,7 @@ def validate_fred_api_key(api_key):
         return False
 
 # =============================================================================
-# YAHOO FINANCE OHLC DATA FETCHING
+# YAHOO FINANCE OHLC DATA FETCHING WITH TA-LIB INDICATORS
 # =============================================================================
 
 @st.cache_data(ttl=3600)
@@ -460,8 +458,48 @@ def fetch_ohlc_data(ticker, start_date, end_date):
     except Exception as e:
         return None
 
-def fetch_all_ohlc_data(start_date="2020-01-01", end_date=None):
-    """Fetch OHLC data for all treasury-related tickers"""
+def add_technical_indicators(data):
+    """Add technical indicators using TA-Lib"""
+    if data is None or len(data) < 50:
+        return data
+    
+    df = data.copy()
+    
+    try:
+        # Simple Moving Averages
+        df['SMA_20'] = ta.SMA(df['Close'], timeperiod=20)
+        df['SMA_50'] = ta.SMA(df['Close'], timeperiod=50)
+        df['SMA_200'] = ta.SMA(df['Close'], timeperiod=200)
+        
+        # Exponential Moving Averages
+        df['EMA_12'] = ta.EMA(df['Close'], timeperiod=12)
+        df['EMA_26'] = ta.EMA(df['Close'], timeperiod=26)
+        
+        # MACD
+        df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = ta.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
+        
+        # RSI
+        df['RSI'] = ta.RSI(df['Close'], timeperiod=14)
+        
+        # Bollinger Bands
+        df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = ta.BBANDS(df['Close'], timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
+        
+        # ATR - Average True Range
+        df['ATR'] = ta.ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
+        
+        # Stochastic Oscillator
+        df['STOCH_K'], df['STOCH_D'] = ta.STOCH(df['High'], df['Low'], df['Close'], fastk_period=14, slowk_period=3, slowd_period=3)
+        
+        # Volume indicators
+        df['OBV'] = ta.OBV(df['Close'], df['Volume'])
+        
+    except Exception as e:
+        pass
+    
+    return df
+
+def fetch_all_ohlc_data_with_indicators(start_date="2020-01-01", end_date=None):
+    """Fetch OHLC data with technical indicators for all treasury-related tickers"""
     if end_date is None:
         end_date = datetime.now().strftime('%Y-%m-%d')
     
@@ -474,9 +512,10 @@ def fetch_all_ohlc_data(start_date="2020-01-01", end_date=None):
         status_text.text(f"Fetching OHLC data for {name} ({ticker})...")
         data = fetch_ohlc_data(ticker, start_date, end_date)
         if data is not None:
+            data_with_indicators = add_technical_indicators(data)
             all_data[ticker] = {
                 'name': name,
-                'data': data
+                'data': data_with_indicators
             }
         progress_bar.progress((idx + 1) / total)
         time.sleep(0.1)
@@ -1111,30 +1150,51 @@ def create_ohlc_candlestick_chart(ohlc_data, ticker, title, height=500):
         showlegend=False
     ))
     
-    # Add moving averages
-    if len(data) > 20:
-        ma20 = data['Close'].rolling(window=20).mean()
+    # Add moving averages if they exist
+    if 'SMA_20' in data.columns and data['SMA_20'].notna().any():
         fig.add_trace(go.Scatter(
             x=data.index,
-            y=ma20,
+            y=data['SMA_20'],
             mode='lines',
-            name='MA20',
+            name='SMA 20',
             line=dict(color=COLORS['positive'], width=1),
             opacity=0.7
         ))
     
-    if len(data) > 50:
-        ma50 = data['Close'].rolling(window=50).mean()
+    if 'SMA_50' in data.columns and data['SMA_50'].notna().any():
         fig.add_trace(go.Scatter(
             x=data.index,
-            y=ma50,
+            y=data['SMA_50'],
             mode='lines',
-            name='MA50',
+            name='SMA 50',
             line=dict(color=COLORS['warning'], width=1),
             opacity=0.7
         ))
     
-    # Update layout with dual y-axis and range selectors
+    # Add Bollinger Bands if they exist
+    if 'BB_Upper' in data.columns and data['BB_Upper'].notna().any():
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=data['BB_Upper'],
+            mode='lines',
+            name='BB Upper',
+            line=dict(color=COLORS['neutral'], width=0.5, dash='dash'),
+            opacity=0.5,
+            showlegend=False
+        ))
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=data['BB_Lower'],
+            mode='lines',
+            name='BB Lower',
+            line=dict(color=COLORS['neutral'], width=0.5, dash='dash'),
+            opacity=0.5,
+            fill='tonexty',
+            fillcolor='rgba(149, 165, 166, 0.1)',
+            showlegend=False
+        ))
+    
+    # Update layout with dual y-axis and range selectors - FIXED
     fig.update_layout(
         title=dict(
             text=title,
@@ -1146,14 +1206,14 @@ def create_ohlc_candlestick_chart(ohlc_data, ticker, title, height=500):
             title=dict(text="Date", font=dict(family="Inter, sans-serif", size=10)),
             rangeselector=dict(
                 buttons=list([
-                    dict(count=1, label="1W", step="week", stepmode="backward"),
+                    dict(count=7, label="1W", step="day", stepmode="backward"),
                     dict(count=15, label="15D", step="day", stepmode="backward"),
-                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                    dict(count=30, label="1M", step="day", stepmode="backward"),
                     dict(count=45, label="45D", step="day", stepmode="backward"),
-                    dict(count=2, label="2M", step="month", stepmode="backward"),
-                    dict(count=6, label="6M", step="month", stepmode="backward"),
-                    dict(count=1, label="YTD", step="year", stepmode="todate"),
-                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(count=60, label="2M", step="day", stepmode="backward"),
+                    dict(count=180, label="6M", step="day", stepmode="backward"),
+                    dict(count=1, label="YTD", step="year", stepmode="backward"),
+                    dict(count=365, label="1Y", step="day", stepmode="backward"),
                     dict(step="all", label="ALL")
                 ])
             ),
@@ -1198,7 +1258,7 @@ def plot_ohlc_comparison_chart(ohlc_data, tickers_to_compare):
     
     fig = go.Figure()
     
-    colors = [COLORS['accent'], COLORS['positive'], COLORS['warning'], COLORS['negative']]
+    colors = [COLORS['accent'], COLORS['positive'], COLORS['warning'], COLORS['negative'], COLORS['neutral'], '#9b59b6']
     color_idx = 0
     
     for ticker in tickers_to_compare:
@@ -1225,14 +1285,14 @@ def plot_ohlc_comparison_chart(ohlc_data, tickers_to_compare):
             title=dict(text="Date", font=dict(family="Inter, sans-serif", size=10)),
             rangeselector=dict(
                 buttons=list([
-                    dict(count=1, label="1W", step="week", stepmode="backward"),
+                    dict(count=7, label="1W", step="day", stepmode="backward"),
                     dict(count=15, label="15D", step="day", stepmode="backward"),
-                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                    dict(count=30, label="1M", step="day", stepmode="backward"),
                     dict(count=45, label="45D", step="day", stepmode="backward"),
-                    dict(count=2, label="2M", step="month", stepmode="backward"),
-                    dict(count=6, label="6M", step="month", stepmode="backward"),
-                    dict(count=1, label="YTD", step="year", stepmode="todate"),
-                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(count=60, label="2M", step="day", stepmode="backward"),
+                    dict(count=180, label="6M", step="day", stepmode="backward"),
+                    dict(count=1, label="YTD", step="year", stepmode="backward"),
+                    dict(count=365, label="1Y", step="day", stepmode="backward"),
                     dict(step="all", label="ALL")
                 ])
             ),
@@ -1243,7 +1303,7 @@ def plot_ohlc_comparison_chart(ohlc_data, tickers_to_compare):
         yaxis=dict(
             title=dict(text="Return (%)", font=dict(family="Inter, sans-serif", size=10)),
             gridcolor=COLORS['grid'],
-            tickformat='.1f%',
+            tickformat='.1f',
             tickfont=dict(family="JetBrains Mono, monospace", size=9)
         ),
         paper_bgcolor=COLORS['surface'],
@@ -1260,6 +1320,110 @@ def plot_ohlc_comparison_chart(ohlc_data, tickers_to_compare):
             font=dict(family="Inter, sans-serif", size=10)
         )
     )
+    
+    return fig
+
+def create_technical_indicators_chart(ohlc_data, ticker, title, height=500):
+    """Create technical indicators chart with RSI and MACD"""
+    
+    if ohlc_data is None or ticker not in ohlc_data:
+        return None
+    
+    data = ohlc_data[ticker]['data']
+    
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+        row_heights=[0.5, 0.25, 0.25],
+        subplot_titles=(title, 'RSI (14)', 'MACD')
+    )
+    
+    # Price chart with candlesticks
+    fig.add_trace(go.Candlestick(
+        x=data.index,
+        open=data['Open'],
+        high=data['High'],
+        low=data['Low'],
+        close=data['Close'],
+        name='Price',
+        increasing=dict(line=dict(color=COLORS['up']), fillcolor=COLORS['up']),
+        decreasing=dict(line=dict(color=COLORS['down']), fillcolor=COLORS['down']),
+        showlegend=False
+    ), row=1, col=1)
+    
+    # Add SMA lines
+    if 'SMA_20' in data.columns:
+        fig.add_trace(go.Scatter(
+            x=data.index, y=data['SMA_20'],
+            mode='lines', name='SMA 20',
+            line=dict(color=COLORS['positive'], width=1)
+        ), row=1, col=1)
+    
+    if 'SMA_50' in data.columns:
+        fig.add_trace(go.Scatter(
+            x=data.index, y=data['SMA_50'],
+            mode='lines', name='SMA 50',
+            line=dict(color=COLORS['warning'], width=1)
+        ), row=1, col=1)
+    
+    # RSI
+    if 'RSI' in data.columns:
+        fig.add_trace(go.Scatter(
+            x=data.index, y=data['RSI'],
+            mode='lines', name='RSI',
+            line=dict(color=COLORS['accent'], width=1.5)
+        ), row=2, col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color=COLORS['negative'], row=2, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color=COLORS['positive'], row=2, col=1)
+    
+    # MACD
+    if 'MACD' in data.columns:
+        fig.add_trace(go.Scatter(
+            x=data.index, y=data['MACD'],
+            mode='lines', name='MACD',
+            line=dict(color=COLORS['positive'], width=1.5)
+        ), row=3, col=1)
+        fig.add_trace(go.Scatter(
+            x=data.index, y=data['MACD_Signal'],
+            mode='lines', name='Signal',
+            line=dict(color=COLORS['negative'], width=1.5)
+        ), row=3, col=1)
+        
+        # MACD Histogram
+        colors_macd = ['#26a69a' if val >= 0 else '#ef5350' for val in data['MACD_Hist']]
+        fig.add_trace(go.Bar(
+            x=data.index, y=data['MACD_Hist'],
+            name='Histogram',
+            marker_color=colors_macd,
+            opacity=0.5
+        ), row=3, col=1)
+    
+    fig.update_layout(
+        height=height,
+        paper_bgcolor=COLORS['surface'],
+        plot_bgcolor=COLORS['surface'],
+        font=dict(family="Inter, sans-serif", size=10, color=COLORS['text_secondary']),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            bgcolor='rgba(0,0,0,0)',
+            font=dict(size=8)
+        )
+    )
+    
+    fig.update_xaxes(gridcolor=COLORS['grid'], gridwidth=0.5, row=1, col=1)
+    fig.update_xaxes(gridcolor=COLORS['grid'], gridwidth=0.5, row=2, col=1)
+    fig.update_xaxes(gridcolor=COLORS['grid'], gridwidth=0.5, row=3, col=1)
+    fig.update_yaxes(gridcolor=COLORS['grid'], gridwidth=0.5, row=1, col=1)
+    fig.update_yaxes(gridcolor=COLORS['grid'], gridwidth=0.5, row=2, col=1)
+    fig.update_yaxes(gridcolor=COLORS['grid'], gridwidth=0.5, row=3, col=1)
+    
+    fig.update_xaxes(rangeslider=dict(visible=False))
     
     return fig
 
@@ -1316,7 +1480,7 @@ def create_institutional_layout(fig, title, y_title=None, height=500):
     return fig
 
 def plot_2y_yield_chart(yield_df):
-    """Create interactive 2Y yield chart with range slider"""
+    """Create interactive 2Y yield chart with range slider - FIXED"""
     if '2Y' not in yield_df.columns:
         return None
     
@@ -1339,14 +1503,14 @@ def plot_2y_yield_chart(yield_df):
         xaxis=dict(
             rangeselector=dict(
                 buttons=list([
-                    dict(count=1, label="1W", step="week", stepmode="backward"),
+                    dict(count=7, label="1W", step="day", stepmode="backward"),
                     dict(count=15, label="15D", step="day", stepmode="backward"),
-                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                    dict(count=30, label="1M", step="day", stepmode="backward"),
                     dict(count=45, label="45D", step="day", stepmode="backward"),
-                    dict(count=2, label="2M", step="month", stepmode="backward"),
-                    dict(count=6, label="6M", step="month", stepmode="backward"),
-                    dict(count=1, label="YTD", step="year", stepmode="todate"),
-                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(count=60, label="2M", step="day", stepmode="backward"),
+                    dict(count=180, label="6M", step="day", stepmode="backward"),
+                    dict(count=1, label="YTD", step="year", stepmode="backward"),
+                    dict(count=365, label="1Y", step="day", stepmode="backward"),
                     dict(step="all", label="ALL")
                 ])
             ),
@@ -1358,7 +1522,7 @@ def plot_2y_yield_chart(yield_df):
     return fig
 
 def plot_10y_yield_chart(yield_df):
-    """Create interactive 10Y yield chart with range slider"""
+    """Create interactive 10Y yield chart with range slider - FIXED"""
     if '10Y' not in yield_df.columns:
         return None
     
@@ -1381,14 +1545,14 @@ def plot_10y_yield_chart(yield_df):
         xaxis=dict(
             rangeselector=dict(
                 buttons=list([
-                    dict(count=1, label="1W", step="week", stepmode="backward"),
+                    dict(count=7, label="1W", step="day", stepmode="backward"),
                     dict(count=15, label="15D", step="day", stepmode="backward"),
-                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                    dict(count=30, label="1M", step="day", stepmode="backward"),
                     dict(count=45, label="45D", step="day", stepmode="backward"),
-                    dict(count=2, label="2M", step="month", stepmode="backward"),
-                    dict(count=6, label="6M", step="month", stepmode="backward"),
-                    dict(count=1, label="YTD", step="year", stepmode="todate"),
-                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(count=60, label="2M", step="day", stepmode="backward"),
+                    dict(count=180, label="6M", step="day", stepmode="backward"),
+                    dict(count=1, label="YTD", step="year", stepmode="backward"),
+                    dict(count=365, label="1Y", step="day", stepmode="backward"),
                     dict(step="all", label="ALL")
                 ])
             ),
@@ -2120,10 +2284,10 @@ def main():
             st.session_state.api_key_validated = False
             st.stop()
     
-    # Fetch OHLC data from Yahoo Finance
+    # Fetch OHLC data from Yahoo Finance with TA-Lib indicators
     if st.session_state.ohlc_data is None:
-        with st.spinner("Fetching OHLC data from Yahoo Finance..."):
-            ohlc_data = fetch_all_ohlc_data(start_date="2020-01-01")
+        with st.spinner("Fetching OHLC data from Yahoo Finance with technical indicators..."):
+            ohlc_data = fetch_all_ohlc_data_with_indicators(start_date="2020-01-01")
             if ohlc_data is not None:
                 st.session_state.ohlc_data = ohlc_data
     
@@ -2308,14 +2472,14 @@ def main():
             xaxis=dict(
                 rangeselector=dict(
                     buttons=list([
-                        dict(count=1, label="1W", step="week", stepmode="backward"),
+                        dict(count=7, label="1W", step="day", stepmode="backward"),
                         dict(count=15, label="15D", step="day", stepmode="backward"),
-                        dict(count=1, label="1M", step="month", stepmode="backward"),
+                        dict(count=30, label="1M", step="day", stepmode="backward"),
                         dict(count=45, label="45D", step="day", stepmode="backward"),
-                        dict(count=2, label="2M", step="month", stepmode="backward"),
-                        dict(count=6, label="6M", step="month", stepmode="backward"),
-                        dict(count=1, label="YTD", step="year", stepmode="todate"),
-                        dict(count=1, label="1Y", step="year", stepmode="backward"),
+                        dict(count=60, label="2M", step="day", stepmode="backward"),
+                        dict(count=180, label="6M", step="day", stepmode="backward"),
+                        dict(count=1, label="YTD", step="year", stepmode="backward"),
+                        dict(count=365, label="1Y", step="day", stepmode="backward"),
                         dict(step="all", label="ALL")
                     ])
                 ),
@@ -2343,14 +2507,14 @@ def main():
                 xaxis=dict(
                     rangeselector=dict(
                         buttons=list([
-                            dict(count=1, label="1W", step="week", stepmode="backward"),
+                            dict(count=7, label="1W", step="day", stepmode="backward"),
                             dict(count=15, label="15D", step="day", stepmode="backward"),
-                            dict(count=1, label="1M", step="month", stepmode="backward"),
+                            dict(count=30, label="1M", step="day", stepmode="backward"),
                             dict(count=45, label="45D", step="day", stepmode="backward"),
-                            dict(count=2, label="2M", step="month", stepmode="backward"),
-                            dict(count=6, label="6M", step="month", stepmode="backward"),
-                            dict(count=1, label="YTD", step="year", stepmode="todate"),
-                            dict(count=1, label="1Y", step="year", stepmode="backward"),
+                            dict(count=60, label="2M", step="day", stepmode="backward"),
+                            dict(count=180, label="6M", step="day", stepmode="backward"),
+                            dict(count=1, label="YTD", step="year", stepmode="backward"),
+                            dict(count=365, label="1Y", step="day", stepmode="backward"),
                             dict(step="all", label="ALL")
                         ])
                     ),
@@ -2363,14 +2527,14 @@ def main():
     # ===== TAB 3: OHLC ANALYSIS =====
     with tabs[2]:
         st.markdown("### Treasury Yield OHLC Analysis (2020 - Present)")
-        st.markdown("*Interactive candlestick charts with range selectors - Data from Yahoo Finance*")
+        st.markdown("*Interactive candlestick charts with technical indicators (SMA, RSI, MACD) - Data from Yahoo Finance*")
         
         if ohlc_data is not None:
-            # Primary Treasury Yield Chart
-            st.markdown("#### 10-Year Treasury Yield (^TNX)")
-            fig_tnx = create_ohlc_candlestick_chart(ohlc_data, '^TNX', "10-Year Treasury Yield - Daily OHLC", height=500)
-            if fig_tnx:
-                st.plotly_chart(fig_tnx, use_container_width=True)
+            # 10-Year Treasury Yield Chart with Technical Indicators
+            st.markdown("#### 10-Year Treasury Yield (^TNX) - Technical Analysis")
+            fig_tnx_tech = create_technical_indicators_chart(ohlc_data, '^TNX', "10-Year Treasury Yield - Technical Analysis", height=700)
+            if fig_tnx_tech:
+                st.plotly_chart(fig_tnx_tech, use_container_width=True)
             else:
                 st.warning("10-Year Treasury data not available")
             
@@ -2841,7 +3005,8 @@ def main():
         """
         <div style="text-align: center; color: #7f8c8d; font-size: 0.65rem;">
             <p>Yield Curve Analytics | Executive Summary Report | Institutional Quantitative Platform</p>
-            <p>Data: Federal Reserve Economic Data (FRED) | Yahoo Finance | Models: Nelson-Siegel (1987), Svensson (1994)</p>
+            <p>Data: Federal Reserve Economic Data (FRED) | Yahoo Finance | Technical Analysis: TA-Lib</p>
+            <p>Models: Nelson-Siegel (1987), Svensson (1994)</p>
             <p>Recession Definition: NBER (National Bureau of Economic Research)</p>
             <p>Last Update: {} UTC</p>
         </div>
