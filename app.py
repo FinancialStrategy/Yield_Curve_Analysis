@@ -2,12 +2,14 @@
 # HEDGE FUND YIELD CURVE ANALYTICS PLATFORM
 # EXECUTIVE SUMMARY REPORT - INSTITUTIONAL GRADE
 # =============================================================================
-# Version: 24.0 | Executive Summary Focus | No Shortening | Full Implementation
+# Version: 25.0 | Executive Summary Focus | No Shortening | Full Implementation
 # Includes: Nelson-Siegel, Svensson, Dynamic Analysis, Risk Metrics, Arbitrage Detection
 # Executive Summary Focus: 2Y and 10Y Dynamic Charts with Interactive Time Range
 # NBER Recession: Complete recession period analysis with detailed tables
-# All Tabs: DATA TABLE, 2Y-10Y DYNAMIC CHARTS, SPREAD DYNAMICS, NS MODEL FIT, 
-# NSS MODEL FIT, MODEL COMPARISON, DYNAMIC ANALYSIS, FACTOR ANALYSIS, 
+# OHLC Charts: Yahoo Finance integration with interactive candlestick charts
+# Institutional Typography: Professional fonts throughout the application
+# All Tabs: DATA TABLE, 2Y-10Y DYNAMIC CHARTS, OHLC ANALYSIS, SPREAD DYNAMICS, 
+# NS MODEL FIT, NSS MODEL FIT, MODEL COMPARISON, DYNAMIC ANALYSIS, FACTOR ANALYSIS, 
 # RISK METRICS, ARBITRAGE, NBER RECESSION, FORECASTING, DATA EXPORT
 # =============================================================================
 
@@ -27,11 +29,12 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel, Matern
 import requests
 import time
+import yfinance as yf
 import warnings
 warnings.filterwarnings('ignore')
 
 # =============================================================================
-# CONFIGURATION - PROFESSIONAL THEME
+# CONFIGURATION - PROFESSIONAL THEME WITH INSTITUTIONAL TYPOGRAPHY
 # =============================================================================
 
 st.set_page_config(
@@ -55,7 +58,9 @@ COLORS = {
     'text_primary': '#ecf0f1',
     'text_secondary': '#bdc3c7',
     'grid': '#2c3e50',
-    'recession': 'rgba(52, 73, 94, 0.4)'
+    'recession': 'rgba(52, 73, 94, 0.4)',
+    'up': '#26a69a',
+    'down': '#ef5350'
 }
 
 # FRED Series Configuration - All Maturities (11 tenors)
@@ -87,6 +92,16 @@ MATURITY_MAP = {
     '30Y': 30
 }
 
+# Yahoo Finance Tickers for OHLC Charts
+YAHOO_TICKERS = {
+    '^TNX': '10 Year Treasury Yield',
+    '^FVX': '5 Year Treasury Yield',
+    '^IRX': '13 Week Treasury Bill',
+    'TLT': '20+ Year Treasury Bond ETF',
+    'SHY': '1-3 Year Treasury Bond ETF',
+    'IEF': '7-10 Year Treasury Bond ETF'
+}
+
 # Session State Management
 if 'api_key_validated' not in st.session_state:
     st.session_state.api_key_validated = False
@@ -96,6 +111,8 @@ if 'recession_data' not in st.session_state:
     st.session_state.recession_data = None
 if 'data_fetched' not in st.session_state:
     st.session_state.data_fetched = False
+if 'ohlc_data' not in st.session_state:
+    st.session_state.ohlc_data = None
 if 'ns_results' not in st.session_state:
     st.session_state.ns_results = None
 if 'nss_results' not in st.session_state:
@@ -107,19 +124,47 @@ if 'factors' not in st.session_state:
 if 'pca_risk' not in st.session_state:
     st.session_state.pca_risk = None
 
-# Custom CSS - Institutional Professional Styling
+# Custom CSS - Institutional Professional Styling with Premium Fonts
 st.markdown(
     f"""
     <style>
+    /* Import premium institutional fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+    
+    /* Global font settings */
+    * {{
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }}
+    
     .main {{
         background-color: {COLORS['background']};
     }}
+    
     .hedge-header {{
         background: linear-gradient(90deg, {COLORS['primary']} 0%, {COLORS['secondary']} 100%);
         padding: 1.5rem;
-        border-bottom: 2px solid {COLORS['accent']};
+        border-bottom: 1px solid {COLORS['accent']};
         margin-bottom: 2rem;
     }}
+    
+    .hedge-header h1 {{
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        font-size: 1.25rem;
+        letter-spacing: -0.02em;
+        color: {COLORS['text_primary']};
+        margin: 0;
+    }}
+    
+    .hedge-header p {{
+        font-family: 'Inter', sans-serif;
+        font-weight: 400;
+        font-size: 0.7rem;
+        letter-spacing: 0.3px;
+        color: {COLORS['text_secondary']};
+        margin: 0;
+    }}
+    
     .executive-summary-card {{
         background: linear-gradient(135deg, {COLORS['surface']} 0%, {COLORS['secondary']} 100%);
         border: 1px solid {COLORS['accent']};
@@ -128,14 +173,19 @@ st.markdown(
         margin: 1rem 0;
         box-shadow: 0 4px 15px rgba(0,0,0,0.3);
     }}
+    
     .executive-title {{
-        color: {COLORS['text_primary']};
-        font-size: 1.1rem;
+        font-family: 'Inter', sans-serif;
         font-weight: 600;
+        font-size: 0.9rem;
+        letter-spacing: 1px;
+        color: {COLORS['text_primary']};
         border-left: 3px solid {COLORS['accent']};
         padding-left: 1rem;
         margin-bottom: 1rem;
+        text-transform: uppercase;
     }}
+    
     .recession-card {{
         background: linear-gradient(135deg, {COLORS['surface']} 0%, {COLORS['secondary']} 100%);
         border: 1px solid {COLORS['negative']};
@@ -144,14 +194,19 @@ st.markdown(
         margin: 1rem 0;
         box-shadow: 0 4px 15px rgba(0,0,0,0.3);
     }}
+    
     .recession-title {{
-        color: {COLORS['negative']};
-        font-size: 1.1rem;
+        font-family: 'Inter', sans-serif;
         font-weight: 600;
+        font-size: 0.9rem;
+        letter-spacing: 1px;
+        color: {COLORS['negative']};
         border-left: 3px solid {COLORS['negative']};
         padding-left: 1rem;
         margin-bottom: 1rem;
+        text-transform: uppercase;
     }}
+    
     .api-container {{
         background-color: {COLORS['surface']};
         border: 1px solid {COLORS['grid']};
@@ -161,6 +216,7 @@ st.markdown(
         max-width: 500px;
         text-align: center;
     }}
+    
     .metric-card {{
         background-color: {COLORS['surface']};
         border: 1px solid {COLORS['grid']};
@@ -169,66 +225,92 @@ st.markdown(
         margin: 0.5rem 0;
         transition: all 0.3s ease;
     }}
+    
     .metric-card:hover {{
         border-color: {COLORS['accent']};
         transform: translateY(-2px);
     }}
+    
     .metric-label {{
-        color: {COLORS['text_secondary']};
-        font-size: 0.7rem;
+        font-family: 'Inter', sans-serif;
         font-weight: 500;
+        font-size: 0.65rem;
         letter-spacing: 0.5px;
+        color: {COLORS['text_secondary']};
         text-transform: uppercase;
     }}
+    
     .metric-value {{
-        color: {COLORS['text_primary']};
-        font-size: 1.5rem;
+        font-family: 'JetBrains Mono', 'Courier New', monospace;
         font-weight: 600;
-        font-family: 'Courier New', monospace;
+        font-size: 1.5rem;
+        color: {COLORS['text_primary']};
     }}
+    
+    .metric-change-positive {{
+        color: {COLORS['positive']};
+        font-size: 0.7rem;
+    }}
+    
+    .metric-change-negative {{
+        color: {COLORS['negative']};
+        font-size: 0.7rem;
+    }}
+    
     .status-inverted {{
         color: {COLORS['negative']};
         font-weight: 700;
     }}
+    
     .status-normal {{
         color: {COLORS['positive']};
         font-weight: 700;
     }}
+    
     .status-caution {{
         color: {COLORS['warning']};
         font-weight: 700;
     }}
+    
     .stTabs [data-baseweb="tab-list"] {{
         gap: 0rem;
         background-color: {COLORS['surface']};
         border-bottom: 1px solid {COLORS['grid']};
     }}
+    
     .stTabs [data-baseweb="tab"] {{
         background-color: transparent;
+        font-family: 'Inter', sans-serif;
+        font-weight: 500;
+        font-size: 0.7rem;
+        letter-spacing: 0.5px;
         color: {COLORS['text_secondary']};
         padding: 0.5rem 1.5rem;
-        font-size: 0.75rem;
-        font-weight: 500;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
     }}
+    
     .stTabs [aria-selected="true"] {{
         color: {COLORS['accent']};
         border-bottom: 2px solid {COLORS['accent']};
     }}
+    
     .stButton > button {{
         background-color: {COLORS['accent']};
         color: white;
         border: none;
         border-radius: 4px;
         padding: 0.5rem 1rem;
+        font-family: 'Inter', sans-serif;
         font-weight: 500;
+        font-size: 0.75rem;
         transition: all 0.3s ease;
     }}
+    
     .stButton > button:hover {{
         background-color: {COLORS['primary']};
         transform: translateY(-1px);
     }}
+    
     #MainMenu {{
         visibility: hidden;
     }}
@@ -238,13 +320,37 @@ st.markdown(
     header {{
         visibility: hidden;
     }}
+    
     .dataframe {{
-        font-family: 'Courier New', monospace;
-        font-size: 0.8rem;
+        font-family: 'JetBrains Mono', 'Courier New', monospace;
+        font-size: 0.7rem;
     }}
+    
     .dataframe th {{
         background-color: {COLORS['secondary']};
         color: {COLORS['text_primary']};
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        font-size: 0.7rem;
+    }}
+    
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {{
+        width: 6px;
+        height: 6px;
+    }}
+    
+    ::-webkit-scrollbar-track {{
+        background: {COLORS['surface']};
+    }}
+    
+    ::-webkit-scrollbar-thumb {{
+        background: {COLORS['accent']};
+        border-radius: 3px;
+    }}
+    
+    ::-webkit-scrollbar-thumb:hover {{
+        background: {COLORS['primary']};
     }}
     </style>
     """, 
@@ -338,6 +444,47 @@ def validate_fred_api_key(api_key):
         return False
     except Exception as e:
         return False
+
+# =============================================================================
+# YAHOO FINANCE OHLC DATA FETCHING
+# =============================================================================
+
+@st.cache_data(ttl=3600)
+def fetch_ohlc_data(ticker, start_date, end_date):
+    """Fetch OHLC data from Yahoo Finance"""
+    try:
+        data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+        if not data.empty:
+            return data
+        return None
+    except Exception as e:
+        return None
+
+def fetch_all_ohlc_data(start_date="2020-01-01", end_date=None):
+    """Fetch OHLC data for all treasury-related tickers"""
+    if end_date is None:
+        end_date = datetime.now().strftime('%Y-%m-%d')
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    all_data = {}
+    total = len(YAHOO_TICKERS)
+    
+    for idx, (ticker, name) in enumerate(YAHOO_TICKERS.items()):
+        status_text.text(f"Fetching OHLC data for {name} ({ticker})...")
+        data = fetch_ohlc_data(ticker, start_date, end_date)
+        if data is not None:
+            all_data[ticker] = {
+                'name': name,
+                'data': data
+            }
+        progress_bar.progress((idx + 1) / total)
+        time.sleep(0.1)
+    
+    status_text.empty()
+    progress_bar.empty()
+    
+    return all_data if all_data else None
 
 # =============================================================================
 # NELSON-SIEGEL MODEL FAMILY - COMPLETE IMPLEMENTATION
@@ -930,6 +1077,193 @@ class NBERRecessionAnalysis:
         }
 
 # =============================================================================
+# OHLC CHART FUNCTIONS - COMPLETE WITH INTERACTIVE RANGE SELECTORS
+# =============================================================================
+
+def create_ohlc_candlestick_chart(ohlc_data, ticker, title, height=500):
+    """Create interactive candlestick chart with range selectors"""
+    
+    if ohlc_data is None or ticker not in ohlc_data:
+        return None
+    
+    data = ohlc_data[ticker]['data']
+    
+    fig = go.Figure(data=[go.Candlestick(
+        x=data.index,
+        open=data['Open'],
+        high=data['High'],
+        low=data['Low'],
+        close=data['Close'],
+        name='OHLC',
+        increasing=dict(line=dict(color=COLORS['up']), fillcolor=COLORS['up']),
+        decreasing=dict(line=dict(color=COLORS['down']), fillcolor=COLORS['down']),
+        showlegend=False
+    )])
+    
+    # Add volume bars as background
+    fig.add_trace(go.Bar(
+        x=data.index,
+        y=data['Volume'],
+        name='Volume',
+        marker_color=COLORS['accent'],
+        opacity=0.3,
+        yaxis='y2',
+        showlegend=False
+    ))
+    
+    # Add moving averages
+    if len(data) > 20:
+        ma20 = data['Close'].rolling(window=20).mean()
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=ma20,
+            mode='lines',
+            name='MA20',
+            line=dict(color=COLORS['positive'], width=1),
+            opacity=0.7
+        ))
+    
+    if len(data) > 50:
+        ma50 = data['Close'].rolling(window=50).mean()
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=ma50,
+            mode='lines',
+            name='MA50',
+            line=dict(color=COLORS['warning'], width=1),
+            opacity=0.7
+        ))
+    
+    # Update layout with dual y-axis and range selectors
+    fig.update_layout(
+        title=dict(
+            text=title,
+            font=dict(family="Inter, sans-serif", size=14, color=COLORS['text_primary']),
+            x=0.02,
+            xanchor='left'
+        ),
+        xaxis=dict(
+            title=dict(text="Date", font=dict(family="Inter, sans-serif", size=10)),
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=1, label="1W", step="week", stepmode="backward"),
+                    dict(count=15, label="15D", step="day", stepmode="backward"),
+                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                    dict(count=45, label="45D", step="day", stepmode="backward"),
+                    dict(count=2, label="2M", step="month", stepmode="backward"),
+                    dict(count=6, label="6M", step="month", stepmode="backward"),
+                    dict(count=1, label="YTD", step="year", stepmode="todate"),
+                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(step="all", label="ALL")
+                ])
+            ),
+            rangeslider=dict(visible=True, thickness=0.05),
+            type="date",
+            gridcolor=COLORS['grid'],
+            showgrid=True
+        ),
+        yaxis=dict(
+            title=dict(text="Price", font=dict(family="Inter, sans-serif", size=10)),
+            side='left',
+            gridcolor=COLORS['grid'],
+            showgrid=True,
+            tickfont=dict(family="JetBrains Mono, monospace", size=9)
+        ),
+        yaxis2=dict(
+            title=dict(text="Volume", font=dict(family="Inter, sans-serif", size=10)),
+            overlaying='y',
+            side='right',
+            showgrid=False,
+            tickfont=dict(family="JetBrains Mono, monospace", size=9)
+        ),
+        paper_bgcolor=COLORS['surface'],
+        plot_bgcolor=COLORS['surface'],
+        height=height,
+        hovermode='x unified',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            bgcolor='rgba(0,0,0,0)',
+            font=dict(family="Inter, sans-serif", size=10)
+        )
+    )
+    
+    return fig
+
+def plot_ohlc_comparison_chart(ohlc_data, tickers_to_compare):
+    """Create comparison chart for multiple OHLC series"""
+    
+    fig = go.Figure()
+    
+    colors = [COLORS['accent'], COLORS['positive'], COLORS['warning'], COLORS['negative']]
+    color_idx = 0
+    
+    for ticker in tickers_to_compare:
+        if ticker in ohlc_data:
+            data = ohlc_data[ticker]['data']
+            normalized = (data['Close'] / data['Close'].iloc[0] - 1) * 100
+            fig.add_trace(go.Scatter(
+                x=data.index,
+                y=normalized,
+                mode='lines',
+                name=ohlc_data[ticker]['name'],
+                line=dict(color=colors[color_idx % len(colors)], width=1.5)
+            ))
+            color_idx += 1
+    
+    fig.update_layout(
+        title=dict(
+            text="Treasury Securities Performance Comparison (Normalized to 100)",
+            font=dict(family="Inter, sans-serif", size=14, color=COLORS['text_primary']),
+            x=0.02,
+            xanchor='left'
+        ),
+        xaxis=dict(
+            title=dict(text="Date", font=dict(family="Inter, sans-serif", size=10)),
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=1, label="1W", step="week", stepmode="backward"),
+                    dict(count=15, label="15D", step="day", stepmode="backward"),
+                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                    dict(count=45, label="45D", step="day", stepmode="backward"),
+                    dict(count=2, label="2M", step="month", stepmode="backward"),
+                    dict(count=6, label="6M", step="month", stepmode="backward"),
+                    dict(count=1, label="YTD", step="year", stepmode="todate"),
+                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(step="all", label="ALL")
+                ])
+            ),
+            rangeslider=dict(visible=True, thickness=0.05),
+            type="date",
+            gridcolor=COLORS['grid']
+        ),
+        yaxis=dict(
+            title=dict(text="Return (%)", font=dict(family="Inter, sans-serif", size=10)),
+            gridcolor=COLORS['grid'],
+            tickformat='.1f%',
+            tickfont=dict(family="JetBrains Mono, monospace", size=9)
+        ),
+        paper_bgcolor=COLORS['surface'],
+        plot_bgcolor=COLORS['surface'],
+        height=500,
+        hovermode='x unified',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            bgcolor='rgba(0,0,0,0)',
+            font=dict(family="Inter, sans-serif", size=10)
+        )
+    )
+    
+    return fig
+
+# =============================================================================
 # VISUALIZATION FUNCTIONS - COMPLETE SET
 # =============================================================================
 
@@ -939,10 +1273,10 @@ def create_institutional_layout(fig, title, y_title=None, height=500):
         template='plotly_dark',
         paper_bgcolor=COLORS['surface'],
         plot_bgcolor=COLORS['surface'],
-        font=dict(family="Courier New, monospace", size=10, color=COLORS['text_secondary']),
+        font=dict(family="Inter, sans-serif", size=10, color=COLORS['text_secondary']),
         title=dict(
             text=title,
-            font=dict(size=12, color=COLORS['text_primary']),
+            font=dict(family="Inter, sans-serif", size=12, color=COLORS['text_primary']),
             x=0.02,
             xanchor='left'
         ),
@@ -956,7 +1290,7 @@ def create_institutional_layout(fig, title, y_title=None, height=500):
             xanchor="right",
             x=1,
             bgcolor='rgba(0,0,0,0)',
-            font=dict(size=8)
+            font=dict(family="Inter, sans-serif", size=8)
         )
     )
     
@@ -964,16 +1298,16 @@ def create_institutional_layout(fig, title, y_title=None, height=500):
         gridcolor=COLORS['grid'],
         gridwidth=0.5,
         zeroline=False,
-        tickfont=dict(size=8),
-        title_font=dict(size=9)
+        tickfont=dict(family="JetBrains Mono, monospace", size=8),
+        title_font=dict(family="Inter, sans-serif", size=9)
     )
     
     fig.update_yaxes(
         gridcolor=COLORS['grid'],
         gridwidth=0.5,
         zeroline=False,
-        tickfont=dict(size=8),
-        title_font=dict(size=9)
+        tickfont=dict(family="JetBrains Mono, monospace", size=8),
+        title_font=dict(family="Inter, sans-serif", size=9)
     )
     
     if y_title:
@@ -1005,14 +1339,15 @@ def plot_2y_yield_chart(yield_df):
         xaxis=dict(
             rangeselector=dict(
                 buttons=list([
+                    dict(count=1, label="1W", step="week", stepmode="backward"),
+                    dict(count=15, label="15D", step="day", stepmode="backward"),
                     dict(count=1, label="1M", step="month", stepmode="backward"),
-                    dict(count=3, label="3M", step="month", stepmode="backward"),
+                    dict(count=45, label="45D", step="day", stepmode="backward"),
+                    dict(count=2, label="2M", step="month", stepmode="backward"),
                     dict(count=6, label="6M", step="month", stepmode="backward"),
                     dict(count=1, label="YTD", step="year", stepmode="todate"),
                     dict(count=1, label="1Y", step="year", stepmode="backward"),
-                    dict(count=5, label="5Y", step="year", stepmode="backward"),
-                    dict(count=10, label="10Y", step="year", stepmode="backward"),
-                    dict(step="all")
+                    dict(step="all", label="ALL")
                 ])
             ),
             rangeslider=dict(visible=True),
@@ -1046,14 +1381,15 @@ def plot_10y_yield_chart(yield_df):
         xaxis=dict(
             rangeselector=dict(
                 buttons=list([
+                    dict(count=1, label="1W", step="week", stepmode="backward"),
+                    dict(count=15, label="15D", step="day", stepmode="backward"),
                     dict(count=1, label="1M", step="month", stepmode="backward"),
-                    dict(count=3, label="3M", step="month", stepmode="backward"),
+                    dict(count=45, label="45D", step="day", stepmode="backward"),
+                    dict(count=2, label="2M", step="month", stepmode="backward"),
                     dict(count=6, label="6M", step="month", stepmode="backward"),
                     dict(count=1, label="YTD", step="year", stepmode="todate"),
                     dict(count=1, label="1Y", step="year", stepmode="backward"),
-                    dict(count=5, label="5Y", step="year", stepmode="backward"),
-                    dict(count=10, label="10Y", step="year", stepmode="backward"),
-                    dict(step="all")
+                    dict(step="all", label="ALL")
                 ])
             ),
             rangeslider=dict(visible=True),
@@ -1784,9 +2120,17 @@ def main():
             st.session_state.api_key_validated = False
             st.stop()
     
+    # Fetch OHLC data from Yahoo Finance
+    if st.session_state.ohlc_data is None:
+        with st.spinner("Fetching OHLC data from Yahoo Finance..."):
+            ohlc_data = fetch_all_ohlc_data(start_date="2020-01-01")
+            if ohlc_data is not None:
+                st.session_state.ohlc_data = ohlc_data
+    
     # Load data from session state
     yield_df = st.session_state.yield_data
     recession_series = st.session_state.recession_data
+    ohlc_data = st.session_state.ohlc_data
     
     # Prepare data structures
     available_cols = [col for col in yield_df.columns if col in MATURITY_MAP]
@@ -1865,12 +2209,14 @@ def main():
             st.session_state.data_fetched = False
             st.session_state.yield_data = None
             st.session_state.recession_data = None
+            st.session_state.ohlc_data = None
             st.rerun()
     
     # ===== TABS =====
     tabs = st.tabs([
         "📊 DATA TABLE",
         "📈 2Y & 10Y DYNAMIC CHARTS",
+        "🕯️ OHLC ANALYSIS",
         "📈 SPREAD DYNAMICS",
         "🔬 NS MODEL FIT",
         "📉 NSS MODEL FIT",
@@ -1962,14 +2308,15 @@ def main():
             xaxis=dict(
                 rangeselector=dict(
                     buttons=list([
+                        dict(count=1, label="1W", step="week", stepmode="backward"),
+                        dict(count=15, label="15D", step="day", stepmode="backward"),
                         dict(count=1, label="1M", step="month", stepmode="backward"),
-                        dict(count=3, label="3M", step="month", stepmode="backward"),
+                        dict(count=45, label="45D", step="day", stepmode="backward"),
+                        dict(count=2, label="2M", step="month", stepmode="backward"),
                         dict(count=6, label="6M", step="month", stepmode="backward"),
                         dict(count=1, label="YTD", step="year", stepmode="todate"),
                         dict(count=1, label="1Y", step="year", stepmode="backward"),
-                        dict(count=5, label="5Y", step="year", stepmode="backward"),
-                        dict(count=10, label="10Y", step="year", stepmode="backward"),
-                        dict(step="all")
+                        dict(step="all", label="ALL")
                     ])
                 ),
                 rangeslider=dict(visible=True),
@@ -1996,14 +2343,15 @@ def main():
                 xaxis=dict(
                     rangeselector=dict(
                         buttons=list([
+                            dict(count=1, label="1W", step="week", stepmode="backward"),
+                            dict(count=15, label="15D", step="day", stepmode="backward"),
                             dict(count=1, label="1M", step="month", stepmode="backward"),
-                            dict(count=3, label="3M", step="month", stepmode="backward"),
+                            dict(count=45, label="45D", step="day", stepmode="backward"),
+                            dict(count=2, label="2M", step="month", stepmode="backward"),
                             dict(count=6, label="6M", step="month", stepmode="backward"),
                             dict(count=1, label="YTD", step="year", stepmode="todate"),
                             dict(count=1, label="1Y", step="year", stepmode="backward"),
-                            dict(count=5, label="5Y", step="year", stepmode="backward"),
-                            dict(count=10, label="10Y", step="year", stepmode="backward"),
-                            dict(step="all")
+                            dict(step="all", label="ALL")
                         ])
                     ),
                     rangeslider=dict(visible=True),
@@ -2012,8 +2360,72 @@ def main():
             )
             st.plotly_chart(fig_spread, use_container_width=True)
     
-    # ===== TAB 3: SPREAD DYNAMICS =====
+    # ===== TAB 3: OHLC ANALYSIS =====
     with tabs[2]:
+        st.markdown("### Treasury Yield OHLC Analysis (2020 - Present)")
+        st.markdown("*Interactive candlestick charts with range selectors - Data from Yahoo Finance*")
+        
+        if ohlc_data is not None:
+            # Primary Treasury Yield Chart
+            st.markdown("#### 10-Year Treasury Yield (^TNX)")
+            fig_tnx = create_ohlc_candlestick_chart(ohlc_data, '^TNX', "10-Year Treasury Yield - Daily OHLC", height=500)
+            if fig_tnx:
+                st.plotly_chart(fig_tnx, use_container_width=True)
+            else:
+                st.warning("10-Year Treasury data not available")
+            
+            # 5-Year Treasury Yield Chart
+            st.markdown("#### 5-Year Treasury Yield (^FVX)")
+            fig_fvx = create_ohlc_candlestick_chart(ohlc_data, '^FVX', "5-Year Treasury Yield - Daily OHLC", height=500)
+            if fig_fvx:
+                st.plotly_chart(fig_fvx, use_container_width=True)
+            else:
+                st.warning("5-Year Treasury data not available")
+            
+            # 13-Week Treasury Bill Chart
+            st.markdown("#### 13-Week Treasury Bill (^IRX)")
+            fig_irx = create_ohlc_candlestick_chart(ohlc_data, '^IRX', "13-Week Treasury Bill - Daily OHLC", height=500)
+            if fig_irx:
+                st.plotly_chart(fig_irx, use_container_width=True)
+            else:
+                st.warning("13-Week Treasury Bill data not available")
+            
+            # Treasury ETFs Comparison
+            st.markdown("#### Treasury ETFs Performance Comparison")
+            fig_etf_compare = plot_ohlc_comparison_chart(ohlc_data, ['TLT', 'SHY', 'IEF'])
+            if fig_etf_compare:
+                st.plotly_chart(fig_etf_compare, use_container_width=True)
+            
+            # All Treasury Securities Comparison
+            st.markdown("#### All Treasury Securities Performance Comparison")
+            fig_all_compare = plot_ohlc_comparison_chart(ohlc_data, ['^TNX', '^FVX', '^IRX', 'TLT', 'SHY', 'IEF'])
+            if fig_all_compare:
+                st.plotly_chart(fig_all_compare, use_container_width=True)
+            
+            # OHLC Data Summary
+            st.markdown("#### OHLC Data Summary")
+            ohlc_summary_data = []
+            for ticker, info in ohlc_data.items():
+                data = info['data']
+                ohlc_summary_data.append({
+                    'Ticker': ticker,
+                    'Name': info['name'],
+                    'Start Date': data.index[0].strftime('%Y-%m-%d'),
+                    'End Date': data.index[-1].strftime('%Y-%m-%d'),
+                    'Observations': len(data),
+                    'Latest Close': "${:.2f}".format(data['Close'].iloc[-1]) if ticker in ['TLT', 'SHY', 'IEF'] else "{:.2f}%".format(data['Close'].iloc[-1]),
+                    '52W High': "${:.2f}".format(data['High'].max()) if ticker in ['TLT', 'SHY', 'IEF'] else "{:.2f}%".format(data['High'].max()),
+                    '52W Low': "${:.2f}".format(data['Low'].min()) if ticker in ['TLT', 'SHY', 'IEF'] else "{:.2f}%".format(data['Low'].min())
+                })
+            
+            ohlc_summary_df = pd.DataFrame(ohlc_summary_data)
+            st.dataframe(ohlc_summary_df, use_container_width=True, hide_index=True)
+            
+        else:
+            st.warning("OHLC data could not be fetched from Yahoo Finance. Please check your internet connection.")
+    
+    # ===== TAB 4: SPREAD DYNAMICS =====
+    with tabs[3]:
         st.markdown("### Yield Spread Dynamics Analysis")
         st.markdown("*Comprehensive analysis of key yield spreads*")
         
@@ -2031,8 +2443,8 @@ def main():
         })
         st.dataframe(spread_stats, use_container_width=True, hide_index=True)
     
-    # ===== TAB 4: NS MODEL FIT =====
-    with tabs[3]:
+    # ===== TAB 5: NS MODEL FIT =====
+    with tabs[4]:
         st.markdown("### Nelson-Siegel Model Calibration")
         
         if ns_result:
@@ -2078,8 +2490,8 @@ def main():
             fig_resid = create_institutional_layout(fig_resid, "FITTING RESIDUALS", "Residual (bps)", height=350)
             st.plotly_chart(fig_resid, use_container_width=True)
     
-    # ===== TAB 5: NSS MODEL FIT =====
-    with tabs[4]:
+    # ===== TAB 6: NSS MODEL FIT =====
+    with tabs[5]:
         st.markdown("### Nelson-Siegel-Svensson Model Calibration")
         
         if nss_result:
@@ -2126,8 +2538,8 @@ def main():
             fig_resid_nss = create_institutional_layout(fig_resid_nss, "FITTING RESIDUALS - SVENSSON", "Residual (bps)", height=350)
             st.plotly_chart(fig_resid_nss, use_container_width=True)
     
-    # ===== TAB 6: MODEL COMPARISON =====
-    with tabs[5]:
+    # ===== TAB 7: MODEL COMPARISON =====
+    with tabs[6]:
         st.markdown("### NS vs NSS Model Comparison")
         
         col1, col2 = st.columns(2)
@@ -2173,8 +2585,8 @@ def main():
                 else:
                     st.warning("NS may be sufficient for this curve shape")
     
-    # ===== TAB 7: DYNAMIC ANALYSIS =====
-    with tabs[6]:
+    # ===== TAB 8: DYNAMIC ANALYSIS =====
+    with tabs[7]:
         st.markdown("### Dynamic Parameter Analysis")
         
         if not dynamic_params.empty:
@@ -2186,8 +2598,8 @@ def main():
             param_stats = dynamic_params[['beta0', 'beta1', 'beta2', 'lambda']].describe()
             st.dataframe(param_stats, use_container_width=True)
     
-    # ===== TAB 8: FACTOR ANALYSIS =====
-    with tabs[7]:
+    # ===== TAB 9: FACTOR ANALYSIS =====
+    with tabs[8]:
         st.markdown("### Factor Analysis")
         
         if not factors.empty:
@@ -2230,8 +2642,8 @@ def main():
             fig_pca = create_institutional_layout(fig_pca, "PCA VARIANCE EXPLANATION", "Variance Explained (%)", height=400)
             st.plotly_chart(fig_pca, use_container_width=True)
     
-    # ===== TAB 9: RISK METRICS =====
-    with tabs[8]:
+    # ===== TAB 10: RISK METRICS =====
+    with tabs[9]:
         st.markdown("### Advanced Risk Metrics")
         
         if '10Y' in yield_df.columns:
@@ -2251,8 +2663,8 @@ def main():
                     st.markdown("#### PCA Risk Decomposition")
                     st.dataframe(pca_risk['loadings'].round(3), use_container_width=True)
     
-    # ===== TAB 10: ARBITRAGE =====
-    with tabs[9]:
+    # ===== TAB 11: ARBITRAGE =====
+    with tabs[10]:
         st.markdown("### Arbitrage Opportunity Detection")
         
         if arbitrage_stats:
@@ -2283,29 +2695,25 @@ def main():
                 mispriced_df['difference'] = mispriced_df['difference'].apply(lambda x: "{:.2f} bps".format(x * 100))
                 st.dataframe(mispriced_df, use_container_width=True, hide_index=True)
     
-    # ===== TAB 11: NBER RECESSION DETAILS =====
-    with tabs[10]:
+    # ===== TAB 12: NBER RECESSION DETAILS =====
+    with tabs[11]:
         st.markdown("### NBER Recession Analysis - Detailed View")
         st.markdown("*Complete historical analysis of NBER recession periods, yield curve inversions, and lead times*")
         
         st.plotly_chart(plot_nber_recession_chart(spreads, recessions), use_container_width=True)
         
-        # Inversion periods chart
         fig_inv = plot_inversion_periods_chart(inversion_periods)
         if fig_inv:
             st.plotly_chart(fig_inv, use_container_width=True)
         
-        # Lead time distribution chart
         fig_lead = plot_lead_time_distribution(lead_times)
         if fig_lead:
             st.plotly_chart(fig_lead, use_container_width=True)
         
-        # Detailed tables
         render_recession_periods_table(recessions)
         render_inversion_periods_table(inversion_periods)
         render_lead_times_table(lead_times)
         
-        # Summary statistics
         st.markdown("#### 📊 Summary Statistics")
         
         col1, col2 = st.columns(2)
@@ -2337,8 +2745,8 @@ def main():
         - Maximum Lead Time: {recession_stats['max_lead_time_days']:.0f} days
         """)
     
-    # ===== TAB 12: FORECASTING =====
-    with tabs[11]:
+    # ===== TAB 13: FORECASTING =====
+    with tabs[12]:
         st.markdown("### Yield Curve Forecasting")
         
         forecast_horizon = st.slider("Forecast Horizon (Days)", 5, 60, 20, key="forecast_horizon")
@@ -2358,8 +2766,8 @@ def main():
             })
             st.dataframe(forecast_df, use_container_width=True, hide_index=True)
     
-    # ===== TAB 13: DATA EXPORT =====
-    with tabs[12]:
+    # ===== TAB 14: DATA EXPORT =====
+    with tabs[13]:
         st.markdown("### Data Export")
         
         col1, col2 = st.columns(2)
@@ -2433,7 +2841,7 @@ def main():
         """
         <div style="text-align: center; color: #7f8c8d; font-size: 0.65rem;">
             <p>Yield Curve Analytics | Executive Summary Report | Institutional Quantitative Platform</p>
-            <p>Data: Federal Reserve Economic Data (FRED) | Models: Nelson-Siegel (1987), Svensson (1994)</p>
+            <p>Data: Federal Reserve Economic Data (FRED) | Yahoo Finance | Models: Nelson-Siegel (1987), Svensson (1994)</p>
             <p>Recession Definition: NBER (National Bureau of Economic Research)</p>
             <p>Last Update: {} UTC</p>
         </div>
