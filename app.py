@@ -1,9 +1,9 @@
 # =============================================================================
 # HEDGE FUND YIELD CURVE ANALYTICS PLATFORM
-# FRED API INTEGRATION | NBER RECESSION ANALYSIS | FULL MATURITY SPECTRUM
+# INTERACTIVE FRED API KEY | NBER RECESSION ANALYSIS | FULL MATURITY SPECTRUM
 # =============================================================================
 # Institutional Grade | Quantitative Financial Analytics
-# Version: 7.0 | Enterprise Edition with FRED API
+# Version: 8.0 | Enterprise Edition with Interactive API Key
 # =============================================================================
 
 import streamlit as st
@@ -19,6 +19,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 import requests
 import json
+import time
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -50,16 +51,36 @@ COLORS = {
     'recession': 'rgba(52, 73, 94, 0.4)'
 }
 
-# FRED API Configuration
+# FRED API Configuration - All Maturities
 FRED_SERIES = {
-    '1M': 'DGS1MO', '3M': 'DGS3MO', '6M': 'DGS6MO',
-    '1Y': 'DGS1', '2Y': 'DGS2', '3Y': 'DGS3',
-    '5Y': 'DGS5', '7Y': 'DGS7', '10Y': 'DGS10',
-    '20Y': 'DGS20', '30Y': 'DGS30'
+    '1M': 'DGS1MO',
+    '3M': 'DGS3MO', 
+    '6M': 'DGS6MO',
+    '1Y': 'DGS1',
+    '2Y': 'DGS2',
+    '3Y': 'DGS3',
+    '5Y': 'DGS5',
+    '7Y': 'DGS7',
+    '10Y': 'DGS10',
+    '20Y': 'DGS20',
+    '30Y': 'DGS30'
 }
 
-MATURITY_MAP = {'1M': 1/12, '3M': 0.25, '6M': 0.5, '1Y': 1, '2Y': 2, 
-                '3Y': 3, '5Y': 5, '7Y': 7, '10Y': 10, '20Y': 20, '30Y': 30}
+MATURITY_MAP = {
+    '1M': 1/12, '3M': 0.25, '6M': 0.5, 
+    '1Y': 1, '2Y': 2, '3Y': 3, '5Y': 5, 
+    '7Y': 7, '10Y': 10, '20Y': 20, '30Y': 30
+}
+
+# Session state initialization
+if 'api_key_validated' not in st.session_state:
+    st.session_state.api_key_validated = False
+if 'yield_data' not in st.session_state:
+    st.session_state.yield_data = None
+if 'recession_data' not in st.session_state:
+    st.session_state.recession_data = None
+if 'data_fetched' not in st.session_state:
+    st.session_state.data_fetched = False
 
 # Custom CSS - Institutional Professional
 st.markdown(f"""
@@ -76,13 +97,23 @@ st.markdown(f"""
         margin-bottom: 2rem;
     }}
     
+    .api-container {{
+        background-color: {COLORS['surface']};
+        border: 1px solid {COLORS['grid']};
+        border-radius: 8px;
+        padding: 2rem;
+        margin: 2rem auto;
+        max-width: 500px;
+        text-align: center;
+    }}
+    
     .api-status {{
         background-color: {COLORS['surface']};
         border: 1px solid {COLORS['grid']};
         border-radius: 4px;
-        padding: 0.5rem;
+        padding: 0.75rem;
         margin-bottom: 1rem;
-        font-size: 0.75rem;
+        font-size: 0.8rem;
     }}
     
     .metric-card {{
@@ -108,16 +139,6 @@ st.markdown(f"""
         font-family: 'Courier New', monospace;
     }}
     
-    .metric-change-positive {{
-        color: {COLORS['positive']};
-        font-size: 0.7rem;
-    }}
-    
-    .metric-change-negative {{
-        color: {COLORS['negative']};
-        font-size: 0.7rem;
-    }}
-    
     .status-inverted {{ color: {COLORS['negative']}; font-weight: 700; }}
     .status-normal {{ color: {COLORS['positive']}; font-weight: 700; }}
     .status-caution {{ color: {COLORS['warning']}; font-weight: 700; }}
@@ -140,6 +161,20 @@ st.markdown(f"""
     .stTabs [aria-selected="true"] {{
         color: {COLORS['accent']};
         border-bottom: 2px solid {COLORS['accent']};
+    }}
+    
+    .stButton > button {{
+        background-color: {COLORS['accent']};
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 0.5rem 1rem;
+        font-weight: 500;
+    }}
+    
+    .stButton > button:hover {{
+        background-color: {COLORS['primary']};
+        color: white;
     }}
     
     #MainMenu {{visibility: hidden;}}
@@ -182,27 +217,20 @@ def fetch_fred_data(api_key, series_id):
             return pd.Series(values, index=dates, name=series_id)
         return None
     except Exception as e:
-        st.warning(f"Error fetching {series_id}: {str(e)}")
         return None
 
-@st.cache_data(ttl=3600)
-def fetch_all_yield_data(api_key):
+def fetch_all_yield_data(api_key, progress_callback=None):
     """Fetch all treasury yield data from FRED"""
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
     all_data = {}
     total_series = len(FRED_SERIES)
     
     for idx, (name, series_id) in enumerate(FRED_SERIES.items()):
-        status_text.text(f"Fetching {name} ({series_id})...")
+        if progress_callback:
+            progress_callback(idx, total_series, name, series_id)
         data = fetch_fred_data(api_key, series_id)
         if data is not None:
             all_data[name] = data
-        progress_bar.progress((idx + 1) / total_series)
-    
-    status_text.empty()
-    progress_bar.empty()
+        time.sleep(0.1)  # Rate limiting
     
     if not all_data:
         return None
@@ -210,7 +238,6 @@ def fetch_all_yield_data(api_key):
     df = pd.DataFrame(all_data).dropna()
     return df
 
-@st.cache_data(ttl=3600)
 def fetch_recession_data(api_key):
     """Fetch NBER recession indicator from FRED"""
     data = fetch_fred_data(api_key, 'USREC')
@@ -220,6 +247,9 @@ def fetch_recession_data(api_key):
 
 def validate_fred_api_key(api_key):
     """Validate FRED API key"""
+    if not api_key or len(api_key) < 10:
+        return False
+    
     test_url = f"https://api.stlouisfed.org/fred/series/observations"
     params = {
         'series_id': 'DGS10',
@@ -230,7 +260,11 @@ def validate_fred_api_key(api_key):
     
     try:
         response = requests.get(test_url, params=params, timeout=10)
-        return response.status_code == 200
+        if response.status_code == 200:
+            data = response.json()
+            if 'observations' in data:
+                return True
+        return False
     except:
         return False
 
@@ -349,7 +383,7 @@ def calculate_recession_metrics(spreads, recessions):
             inversion_periods.append({'start': inv_start, 'end': date, 'depth': spreads.loc[inv_start:date].min()})
     
     metrics['inversion_periods'] = inversion_periods
-    metrics['total_inversion_days'] = sum([(p['end'] - p['start']).days for p in inversion_periods])
+    metrics['total_inversion_days'] = sum([(p['end'] - p['start']).days for p in inversion_periods]) if inversion_periods else 0
     metrics['avg_inversion_depth'] = np.mean([p['depth'] for p in inversion_periods]) if inversion_periods else 0
     
     # Lead time analysis
@@ -466,7 +500,6 @@ def plot_nber_recession_chart(spreads, recessions):
     
     fig = go.Figure()
     
-    # Add spread line
     if '10Y-2Y' in spreads.columns:
         fig.add_trace(go.Scatter(
             x=spreads.index,
@@ -477,11 +510,9 @@ def plot_nber_recession_chart(spreads, recessions):
             hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Spread: %{y:.1f} bps<extra></extra>'
         ))
     
-    # Zero threshold line
     fig.add_hline(y=0, line_dash="dash", line_color=COLORS['neutral'], 
                  line_width=1, annotation_text="INVERSION THRESHOLD")
     
-    # NBER recession shading
     for recession in recessions:
         fig.add_vrect(
             x0=recession['start'], x1=recession['end'],
@@ -608,6 +639,100 @@ def plot_pca_factors(factors):
     return fig
 
 # =============================================================================
+# API KEY INPUT COMPONENT
+# =============================================================================
+
+def render_api_key_input():
+    """Render interactive API key input component"""
+    
+    st.markdown("""
+    <div class="api-container">
+        <h3 style="color: white; margin-bottom: 1rem;">🔑 FRED API Key Required</h3>
+        <p style="color: #bdc3c7; font-size: 0.85rem; margin-bottom: 1.5rem;">
+            This dashboard requires a FRED API key to access treasury yield data.<br>
+            Get your free API key from:
+        </p>
+        <p style="margin-bottom: 1.5rem;">
+            <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank" style="color: #0f3460;">
+                https://fred.stlouisfed.org/docs/api/api_key.html
+            </a>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        api_key = st.text_input(
+            "Enter your FRED API Key",
+            type="password",
+            key="fred_api_key_input",
+            placeholder="XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+            help="Your FRED API key is required to fetch data"
+        )
+        
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+        
+        with col_btn2:
+            validate_btn = st.button("🔑 Validate & Connect", type="primary", use_container_width=True)
+    
+    if validate_btn:
+        if not api_key:
+            st.error("❌ Please enter a valid API key")
+            return None
+        
+        with st.spinner("Validating API key..."):
+            is_valid = validate_fred_api_key(api_key)
+        
+        if is_valid:
+            st.session_state.api_key = api_key
+            st.session_state.api_key_validated = True
+            st.success("✅ API key validated successfully! Fetching data...")
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.error("❌ Invalid API key. Please check and try again.")
+            return None
+    
+    return None
+
+# =============================================================================
+# DATA FETCHING COMPONENT
+# =============================================================================
+
+def fetch_and_process_data(api_key):
+    """Fetch and process all data from FRED"""
+    
+    progress_placeholder = st.empty()
+    status_placeholder = st.empty()
+    
+    def update_progress(idx, total, name, series_id):
+        progress = (idx + 1) / total
+        progress_placeholder.progress(progress)
+        status_placeholder.text(f"Fetching {name} ({series_id})... [{idx+1}/{total}]")
+    
+    # Fetch yield data
+    status_placeholder.text("Fetching treasury yield data from FRED...")
+    yield_df = fetch_all_yield_data(api_key, update_progress)
+    
+    if yield_df is None or yield_df.empty:
+        progress_placeholder.empty()
+        status_placeholder.empty()
+        st.error("Failed to fetch yield data. Please check your API key and try again.")
+        return None, None
+    
+    # Fetch recession data
+    status_placeholder.text("Fetching NBER recession indicator...")
+    recession_series = fetch_recession_data(api_key)
+    
+    progress_placeholder.empty()
+    status_placeholder.empty()
+    
+    st.success(f"✅ Data fetched successfully: {len(yield_df)} observations from {yield_df.index[0].strftime('%Y-%m-%d')} to {yield_df.index[-1].strftime('%Y-%m-%d')}")
+    
+    return yield_df, recession_series
+
+# =============================================================================
 # MAIN APPLICATION
 # =============================================================================
 
@@ -621,52 +746,33 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # ===== FRED API KEY INPUT =====
-    st.markdown("### FRED API Configuration")
-    st.markdown("Please enter your FRED API key to access treasury yield data.")
-    st.markdown("*Get your free API key from: https://fred.stlouisfed.org/docs/api/api_key.html*")
-    
-    api_key = st.text_input("FRED API Key", type="password", key="fred_api_key")
-    
-    if not api_key:
-        st.warning("⚠️ Please enter your FRED API key to continue")
+    # ===== API KEY VALIDATION =====
+    if not st.session_state.api_key_validated:
+        render_api_key_input()
         st.stop()
-    
-    # Validate API key
-    with st.spinner("Validating API key..."):
-        is_valid = validate_fred_api_key(api_key)
-    
-    if not is_valid:
-        st.error("❌ Invalid FRED API key. Please check and try again.")
-        st.stop()
-    
-    st.success("✅ API key validated successfully")
     
     # ===== DATA FETCHING =====
-    st.markdown("---")
-    st.markdown("### Data Acquisition")
+    if not st.session_state.data_fetched:
+        with st.spinner("Connecting to FRED and fetching data..."):
+            yield_df, recession_series = fetch_and_process_data(st.session_state.api_key)
+        
+        if yield_df is not None:
+            st.session_state.yield_data = yield_df
+            st.session_state.recession_data = recession_series
+            st.session_state.data_fetched = True
+            st.rerun()
+        else:
+            st.session_state.api_key_validated = False
+            st.session_state.data_fetched = False
+            st.rerun()
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        start_date = st.date_input("Start Date", datetime(1990, 1, 1))
-    
-    with col2:
-        if st.button("🔄 Fetch Data from FRED", type="primary"):
-            st.cache_data.clear()
-    
-    # Fetch data
-    with st.spinner("Fetching treasury yield data from FRED..."):
-        yield_df = fetch_all_yield_data(api_key)
+    # ===== LOAD DATA FROM SESSION STATE =====
+    yield_df = st.session_state.yield_data
+    recession_series = st.session_state.recession_data
     
     if yield_df is None or yield_df.empty:
-        st.error("Failed to fetch yield data. Please check your API key and try again.")
+        st.error("No data available. Please refresh the page and try again.")
         st.stop()
-    
-    with st.spinner("Fetching NBER recession indicator..."):
-        recession_series = fetch_recession_data(api_key)
-    
-    st.success(f"✅ Data fetched successfully: {len(yield_df)} observations from {yield_df.index[0].strftime('%Y-%m-%d')} to {yield_df.index[-1].strftime('%Y-%m-%d')}")
     
     # ===== DATA PROCESSING =====
     spreads = calculate_spreads(yield_df)
@@ -691,8 +797,19 @@ def main():
     # PCA analysis
     pca_factors, pca_var = calculate_principal_components(yield_df)
     
-    # ===== METRICS ROW =====
+    # ===== REFRESH BUTTON =====
+    col_refresh1, col_refresh2, col_refresh3 = st.columns([1, 2, 1])
+    with col_refresh2:
+        if st.button("🔄 Refresh Data from FRED", use_container_width=True):
+            st.cache_data.clear()
+            st.session_state.data_fetched = False
+            st.session_state.yield_data = None
+            st.session_state.recession_data = None
+            st.rerun()
+    
     st.markdown("---")
+    
+    # ===== METRICS ROW =====
     st.markdown("### Current Market Metrics")
     
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -892,7 +1009,7 @@ def main():
             st.download_button(
                 label="📥 Download Yield Data (CSV)",
                 data=csv_yields,
-                file_name=f"yield_data_{datetime.now().strftime('%Y%m%d')}.csv",
+                file_name=f"yield_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv"
             )
         
@@ -901,7 +1018,7 @@ def main():
             st.download_button(
                 label="📥 Download Spread Data (CSV)",
                 data=csv_spreads,
-                file_name=f"spread_data_{datetime.now().strftime('%Y%m%d')}.csv",
+                file_name=f"spread_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv"
             )
         
