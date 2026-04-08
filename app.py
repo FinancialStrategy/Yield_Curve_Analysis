@@ -287,11 +287,11 @@ if ns_result and nss_result:
     
     st.markdown("#### Model Recommendation")
     if improvement_rmse > 10:
-        st.success("✅ NSS provides significantly better fit - Recommended for complex curves and longer maturities")
+        st.success("NSS provides significantly better fit - Recommended for complex curves and longer maturities")
     elif improvement_rmse > 5:
-        st.info("📊 NSS provides moderate improvement - Consider for specific use cases")
+        st.info("NSS provides moderate improvement - Consider for specific use cases")
     else:
-        st.warning("⚠️ NS may be sufficient - NSS improvement is marginal, prefer simpler model")
+        st.warning("NS may be sufficient - NSS improvement is marginal, prefer simpler model")
 
 # Residual comparison
 st.markdown("#### Residual Comparison")
@@ -430,12 +430,19 @@ col_int1, col_int2, col_int3 = st.columns(3)
 
 with col_int1:
     if 'Level' in current_factors:
-        level_status = "High" if current_factors['Level'] > 4 else "Low" if current_factors['Level'] < 2 else "Moderate"
+        level_val = current_factors['Level']
+        if level_val > 4:
+            level_status = "High"
+        elif level_val < 2:
+            level_status = "Low"
+        else:
+            level_status = "Moderate"
+        
         st.markdown(
             f"""
             <div class="metric-card">
                 <div class="metric-label">LEVEL FACTOR</div>
-                <div class="metric-value">{current_factors['Level']:.2f}%</div>
+                <div class="metric-value">{level_val:.2f}%</div>
                 <div class="metric-label">{level_status} long-term rate environment</div>
             </div>
             """, 
@@ -444,13 +451,19 @@ with col_int1:
 
 with col_int2:
     if 'Slope' in current_factors:
-        slope_status = "Inverted" if current_factors['Slope'] < 0 else "Normal"
-        slope_color = COLORS['negative'] if current_factors['Slope'] < 0 else COLORS['positive']
+        slope_val = current_factors['Slope']
+        if slope_val < 0:
+            slope_status = "Inverted"
+            slope_color = COLORS['negative']
+        else:
+            slope_status = "Normal"
+            slope_color = COLORS['positive']
+        
         st.markdown(
             f"""
             <div class="metric-card">
                 <div class="metric-label">SLOPE FACTOR</div>
-                <div class="metric-value" style="color: {slope_color};">{current_factors['Slope']:.1f} bps</div>
+                <div class="metric-value" style="color: {slope_color};">{slope_val:.1f} bps</div>
                 <div class="metric-label">{slope_status} curve shape</div>
             </div>
             """, 
@@ -459,12 +472,14 @@ with col_int2:
 
 with col_int3:
     if 'Curvature' in current_factors:
-        curvature_status = "Humped" if current_factors['Curvature'] > 0 else "Sagged"
+        curvature_val = current_factors['Curvature']
+        curvature_status = "Humped" if curvature_val > 0 else "Sagged"
+        
         st.markdown(
             f"""
             <div class="metric-card">
                 <div class="metric-label">CURVATURE FACTOR</div>
-                <div class="metric-value">{current_factors['Curvature']:.1f} bps</div>
+                <div class="metric-value">{curvature_val:.1f} bps</div>
                 <div class="metric-label">{curvature_status} medium-term expectations</div>
             </div>
             """, 
@@ -557,24 +572,24 @@ if pca_risk is not None:
 # Risk report
 st.markdown("#### Risk Assessment Report")
 
-current_slope = spreads['10Y-2Y'].iloc[-1] if '10Y-2Y' in spreads.columns else 0
-volatility = yield_df['10Y'].pct_change().std() * np.sqrt(252) if '10Y' in yield_df.columns else 0
+current_slope_val = spreads['10Y-2Y'].iloc[-1] if '10Y-2Y' in spreads.columns else 0
+volatility_val = yield_df['10Y'].pct_change().std() * np.sqrt(252) if '10Y' in yield_df.columns else 0
 
 # Multi-factor risk scoring
 risk_score = 0
 risk_factors = []
 
-if current_slope < 0:
+if current_slope_val < 0:
 risk_score += 40
 risk_factors.append("Curve inversion (+40)")
-elif current_slope < 50:
+elif current_slope_val < 50:
 risk_score += 20
 risk_factors.append("Curve flattening (+20)")
 
-if volatility > 0.2:
+if volatility_val > 0.2:
 risk_score += 30
 risk_factors.append("High volatility (+30)")
-elif volatility > 0.1:
+elif volatility_val > 0.1:
 risk_score += 15
 risk_factors.append("Elevated volatility (+15)")
 
@@ -582,8 +597,15 @@ if recession_metrics.get('avg_lead_time', 0) < 200:
 risk_score += 20
 risk_factors.append("Recent inversion history (+20)")
 
-risk_level = "HIGH" if risk_score >= 60 else "MEDIUM" if risk_score >= 30 else "LOW"
-risk_color = COLORS['negative'] if risk_level == "HIGH" else COLORS['warning'] if risk_level == "MEDIUM" else COLORS['positive']
+if risk_score >= 60:
+risk_level = "HIGH"
+risk_color = COLORS['negative']
+elif risk_score >= 30:
+risk_level = "MEDIUM"
+risk_color = COLORS['warning']
+else:
+risk_level = "LOW"
+risk_color = COLORS['positive']
 
 st.markdown(
 f"""
@@ -593,8 +615,8 @@ f"""
     <div class="metric-label">
         <strong>Risk Score:</strong> {risk_score}/100<br>
         <strong>Contributing Factors:</strong> {', '.join(risk_factors)}<br>
-        <strong>Curve Status:</strong> {'Inverted' if current_slope < 0 else 'Flattening' if current_slope < 50 else 'Normal'}<br>
-        <strong>10Y Volatility:</strong> {volatility:.2%}<br>
+        <strong>Curve Status:</strong> {'Inverted' if current_slope_val < 0 else 'Flattening' if current_slope_val < 50 else 'Normal'}<br>
+        <strong>10Y Volatility:</strong> {volatility_val:.2%}<br>
         <strong>Risk Horizon:</strong> 10-day VaR at 95% confidence
     </div>
 </div>
@@ -713,7 +735,7 @@ col1, col2 = st.columns(2)
 with col1:
 csv_yields = yield_df.to_csv().encode('utf-8')
 st.download_button(
-    "📥 Download Yield Data (CSV)",
+    "Download Yield Data (CSV)",
     csv_yields,
     f"yield_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
     "text/csv"
@@ -723,7 +745,7 @@ if ns_result:
     ns_params_df = pd.DataFrame([ns_result['params']], columns=['b0', 'b1', 'b2', 'lambda'])
     csv_ns = ns_params_df.to_csv().encode('utf-8')
     st.download_button(
-        "📥 Download NS Parameters",
+        "Download NS Parameters",
         csv_ns,
         f"ns_params_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
         "text/csv"
@@ -731,7 +753,7 @@ if ns_result:
 
 csv_spreads = spreads.to_csv().encode('utf-8')
 st.download_button(
-    "📥 Download Spread Data",
+    "Download Spread Data",
     csv_spreads,
     f"spreads_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
     "text/csv"
@@ -741,7 +763,7 @@ with col2:
 if not dynamic_params.empty:
     csv_dynamic = dynamic_params.to_csv().encode('utf-8')
     st.download_button(
-        "📥 Download Dynamic Parameters",
+        "Download Dynamic Parameters",
         csv_dynamic,
         f"dynamic_params_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
         "text/csv"
@@ -749,7 +771,7 @@ if not dynamic_params.empty:
 
 csv_factors = factors.to_csv().encode('utf-8')
 st.download_button(
-    "📥 Download Factor Data",
+    "Download Factor Data",
     csv_factors,
     f"factors_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
     "text/csv"
@@ -762,7 +784,7 @@ if forecast_result:
     })
     csv_forecast = forecast_export.to_csv().encode('utf-8')
     st.download_button(
-        "📥 Download Forecast Data",
+        "Download Forecast Data",
         csv_forecast,
         f"forecast_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
         "text/csv"
@@ -773,8 +795,17 @@ st.markdown("### Data Summary")
 st.markdown(f"- **Yield Curves:** {len(yield_df.columns)} maturities ({', '.join(yield_df.columns)})")
 st.markdown(f"- **Observations:** {len(yield_df):,}")
 st.markdown(f"- **Date Range:** {yield_df.index[0].strftime('%Y-%m-%d')} to {yield_df.index[-1].strftime('%Y-%m-%d')}")
-st.markdown(f"- **NS RMSE:** {ns_result['rmse']:.4f if ns_result else 'N/A'}")
-st.markdown(f"- **NSS RMSE:** {nss_result['rmse']:.4f if nss_result else 'N/A'}")
+
+if ns_result:
+st.markdown(f"- **NS RMSE:** {ns_result['rmse']:.4f}")
+else:
+st.markdown("- **NS RMSE:** N/A")
+
+if nss_result:
+st.markdown(f"- **NSS RMSE:** {nss_result['rmse']:.4f}")
+else:
+st.markdown("- **NSS RMSE:** N/A")
+
 st.markdown(f"- **NBER Recessions:** {len(recessions)}")
 st.markdown(f"- **Data Completeness:** {yield_df.notna().all().all() * 100:.0f}%")
 
