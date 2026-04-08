@@ -3,7 +3,7 @@
 # COMPLETE IMPLEMENTATION - NS, NSS, DYNAMIC ANALYSIS, RISK METRICS
 # FULL VERSION WITH ALL VISUALIZATIONS - COMPLETELY UNCUT
 # =============================================================================
-# Version: 20.0 | Full Enterprise Suite | No Shortening | Complete Implementation
+# Version: 21.0 | Full Enterprise Suite | No Shortening | Complete Implementation
 # Includes: Nelson-Siegel, Svensson, Dynamic Analysis, Risk Metrics, Arbitrage Detection
 # All Tabs: DATA TABLE, SPREAD DYNAMICS, NS MODEL FIT, NSS MODEL FIT, 
 # MODEL COMPARISON, DYNAMIC ANALYSIS, FACTOR ANALYSIS, RISK METRICS, 
@@ -16,8 +16,6 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-import matplotlib.pyplot as plt
-import seaborn as sns
 from datetime import datetime, timedelta
 from scipy.optimize import minimize, differential_evolution, curve_fit
 from scipy import stats
@@ -30,10 +28,6 @@ import requests
 import time
 import warnings
 warnings.filterwarnings('ignore')
-
-# Set seaborn style for professional charts
-sns.set_style("darkgrid")
-sns.set_palette("husl")
 
 # =============================================================================
 # CONFIGURATION - PROFESSIONAL THEME
@@ -821,7 +815,7 @@ class ArbitrageDetection:
         return arbitrage_stats
 
 # =============================================================================
-# VISUALIZATION FUNCTIONS - COMPLETE SET
+# VISUALIZATION FUNCTIONS - COMPLETE SET (Plotly Only)
 # =============================================================================
 
 def create_institutional_layout(fig, title, y_title=None, height=500):
@@ -1217,72 +1211,72 @@ def plot_arbitrage_chart(maturities, actual, theoretical, mispriced):
     fig = create_institutional_layout(fig, "ARBITRAGE OPPORTUNITY DETECTION", "Yield (%)", height=500)
     return fig
 
-def plot_seaborn_spread_dynamics(spreads_df):
-    """Create seaborn-based spread dynamics visualization"""
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+def plot_spread_correlation_heatmap(spreads_df):
+    """Create correlation heatmap using Plotly"""
+    if len(spreads_df.columns) < 2:
+        return None
     
-    spreads_to_plot = ['10Y-2Y', '10Y-3M', '5Y-2Y', '30Y-10Y']
-    titles = ['10Y-2Y Spread (Primary Indicator)', '10Y-3M Spread (Campbell Harvey)',
-              '5Y-2Y Spread (Medium-term)', '30Y-10Y Spread (Term Premium)']
-    
-    for idx, (spread, title) in enumerate(zip(spreads_to_plot, titles)):
-        row, col = idx // 2, idx % 2
-        if spread in spreads_df.columns:
-            ax = axes[row, col]
-            ax.plot(spreads_df.index, spreads_df[spread], linewidth=1.5, color='#1f77b4')
-            ax.axhline(y=0, color='red', linestyle='--', linewidth=1, alpha=0.7)
-            ax.set_title(title, fontsize=10, fontweight='bold')
-            ax.set_xlabel('Date', fontsize=8)
-            ax.set_ylabel('Spread (bps)', fontsize=8)
-            ax.tick_params(axis='both', labelsize=7)
-            ax.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    return fig
-
-def plot_seaborn_spread_heatmap(spreads_df):
-    """Create seaborn correlation heatmap"""
-    fig, ax = plt.subplots(figsize=(10, 8))
-    
-    # Calculate correlation matrix
     corr_matrix = spreads_df.corr()
     
-    # Create heatmap
-    sns.heatmap(corr_matrix, annot=True, cmap='RdBu_r', center=0, 
-                fmt='.2f', square=True, linewidths=1, cbar_kws={"shrink": 0.8}, ax=ax)
-    ax.set_title('Yield Spread Correlation Matrix', fontsize=12, fontweight='bold')
-    ax.tick_params(axis='both', labelsize=9)
+    fig = go.Figure(data=go.Heatmap(
+        z=corr_matrix.values,
+        x=corr_matrix.columns,
+        y=corr_matrix.columns,
+        colorscale='RdBu',
+        zmid=0,
+        text=corr_matrix.values.round(2),
+        texttemplate='%{text}',
+        textfont={"size": 10},
+        hovertemplate='%{x} vs %{y}: %{z:.2f}<extra></extra>'
+    ))
     
-    plt.tight_layout()
+    fig = create_institutional_layout(fig, "SPREAD CORRELATION MATRIX", height=500)
+    fig.update_layout(
+        xaxis_title="",
+        yaxis_title=""
+    )
+    
     return fig
 
-def plot_seaborn_rolling_stats(spreads_df, window=20):
-    """Create seaborn rolling statistics plot"""
-    fig, axes = plt.subplots(2, 1, figsize=(14, 8))
+def plot_rolling_spread_stats(spreads_df, window=20):
+    """Create rolling statistics plot using Plotly"""
+    if '10Y-2Y' not in spreads_df.columns:
+        return None
     
-    if '10Y-2Y' in spreads_df.columns:
-        spread = spreads_df['10Y-2Y']
-        
-        # Rolling mean
-        rolling_mean = spread.rolling(window=window).mean()
-        rolling_std = spread.rolling(window=window).std()
-        
-        axes[0].plot(spread.index, spread, linewidth=1, alpha=0.5, label='Daily Spread')
-        axes[0].plot(spread.index, rolling_mean, linewidth=2, color='red', label='{}d Rolling Mean'.format(window))
-        axes[0].axhline(y=0, color='green', linestyle='--', linewidth=1, alpha=0.7)
-        axes[0].set_title('10Y-2Y Spread with Rolling Mean', fontsize=10, fontweight='bold')
-        axes[0].set_ylabel('Spread (bps)', fontsize=8)
-        axes[0].legend(loc='best', fontsize=8)
-        axes[0].grid(True, alpha=0.3)
-        
-        # Rolling volatility
-        axes[1].plot(spread.index, rolling_std, linewidth=1.5, color='orange')
-        axes[1].set_title('10Y-2Y Spread Rolling Volatility ({}d)'.format(window), fontsize=10, fontweight='bold')
-        axes[1].set_xlabel('Date', fontsize=8)
-        axes[1].set_ylabel('Volatility (bps)', fontsize=8)
-        axes[1].grid(True, alpha=0.3)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        subplot_titles=('10Y-2Y Spread with Rolling Mean', 
+                                       '10Y-2Y Spread Rolling Volatility'),
+                        vertical_spacing=0.12)
     
-    plt.tight_layout()
+    spread = spreads_df['10Y-2Y']
+    rolling_mean = spread.rolling(window=window).mean()
+    rolling_std = spread.rolling(window=window).std()
+    
+    # Top plot - Spread with rolling mean
+    fig.add_trace(
+        go.Scatter(x=spread.index, y=spread, mode='lines', name='Daily Spread',
+                   line=dict(color=COLORS['accent'], width=1, opacity=0.5)),
+        row=1, col=1
+    )
+    fig.add_trace(
+        go.Scatter(x=spread.index, y=rolling_mean, mode='lines', name='{}d Rolling Mean'.format(window),
+                   line=dict(color=COLORS['positive'], width=2)),
+        row=1, col=1
+    )
+    fig.add_hline(y=0, line_dash="dash", line_color=COLORS['negative'], row=1, col=1)
+    
+    # Bottom plot - Rolling volatility
+    fig.add_trace(
+        go.Scatter(x=spread.index, y=rolling_std, mode='lines', name='Rolling Volatility',
+                   line=dict(color=COLORS['warning'], width=2), fill='tozeroy',
+                   fillcolor='rgba(243, 156, 18, 0.1)'),
+        row=2, col=1
+    )
+    
+    fig = create_institutional_layout(fig, "ROLLING SPREAD STATISTICS ({}d Window)".format(window), height=600)
+    fig.update_yaxes(title_text="Spread (bps)", row=1, col=1)
+    fig.update_yaxes(title_text="Volatility (bps)", row=2, col=1)
+    
     return fig
 
 # =============================================================================
@@ -1673,22 +1667,23 @@ def main():
     # ===== TAB 2: SPREAD DYNAMICS =====
     with tabs[1]:
         st.markdown("### Yield Spread Dynamics Analysis")
-        st.markdown("*Comprehensive analysis of key yield spreads using seaborn visualizations*")
+        st.markdown("*Comprehensive analysis of key yield spreads*")
         
-        # Seaborn spread dynamics chart
+        # Spread dashboard (Plotly)
         st.markdown("#### Spread Evolution Over Time")
-        fig_spreads = plot_seaborn_spread_dynamics(spreads)
-        st.pyplot(fig_spreads)
+        st.plotly_chart(plot_spread_dashboard(spreads, recessions), use_container_width=True)
         
         # Correlation heatmap
         st.markdown("#### Spread Correlation Matrix")
-        fig_heatmap = plot_seaborn_spread_heatmap(spreads)
-        st.pyplot(fig_heatmap)
+        heatmap_fig = plot_spread_correlation_heatmap(spreads)
+        if heatmap_fig:
+            st.plotly_chart(heatmap_fig, use_container_width=True)
         
         # Rolling statistics
         st.markdown("#### Rolling Statistics (20-day window)")
-        fig_rolling = plot_seaborn_rolling_stats(spreads, window=20)
-        st.pyplot(fig_rolling)
+        rolling_fig = plot_rolling_spread_stats(spreads, window=20)
+        if rolling_fig:
+            st.plotly_chart(rolling_fig, use_container_width=True)
         
         # Spread statistics table
         st.markdown("#### Spread Statistics")
