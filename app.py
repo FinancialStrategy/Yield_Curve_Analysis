@@ -2,12 +2,12 @@
 # HEDGE FUND YIELD CURVE ANALYTICS PLATFORM
 # EXECUTIVE SUMMARY REPORT - INSTITUTIONAL GRADE
 # =============================================================================
-# Version: 28.0 | Executive Summary Focus | No Shortening | Full Implementation
+# Version: 29.0 | Executive Summary Focus | No Shortening | Full Implementation
 # Includes: Nelson-Siegel, Svensson, Dynamic Analysis, Risk Metrics, Arbitrage Detection
 # Executive Summary Focus: 2Y and 10Y Dynamic Charts with Interactive Time Range
-# NBER Recession: Complete recession period analysis with detailed tables
+# NBER Recession: Complete recession period analysis with detailed tables and shading
 # Technical Indicators: Using 'ta' package (Technical Analysis Library)
-# Data Source: FRED for all yield data (no Yahoo Finance dependency)
+# Data Source: FRED for all yield data
 # Institutional Typography: Professional fonts throughout the application
 # All Tabs: DATA TABLE, 2Y-10Y DYNAMIC CHARTS, TECHNICAL ANALYSIS, SPREAD DYNAMICS, 
 # NS MODEL FIT, NSS MODEL FIT, MODEL COMPARISON, DYNAMIC ANALYSIS, FACTOR ANALYSIS, 
@@ -31,14 +31,13 @@ import time
 import warnings
 warnings.filterwarnings('ignore')
 
-# Install ta package if not available
+# Import ta package (must be in requirements.txt)
 try:
     import ta
+    TA_AVAILABLE = True
 except ImportError:
-    import subprocess
-    import sys
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "ta"])
-    import ta
+    TA_AVAILABLE = False
+    st.warning("Technical analysis library not available. Install 'ta' package.")
 
 # =============================================================================
 # CONFIGURATION - PROFESSIONAL THEME WITH INSTITUTIONAL TYPOGRAPHY
@@ -66,6 +65,7 @@ COLORS = {
     'text_secondary': '#bdc3c7',
     'grid': '#2c3e50',
     'recession': 'rgba(52, 73, 94, 0.4)',
+    'recession_bar': 'rgba(128, 128, 128, 0.3)',
     'up': '#26a69a',
     'down': '#ef5350'
 }
@@ -98,6 +98,44 @@ MATURITY_MAP = {
     '20Y': 20,
     '30Y': 30
 }
+
+# NBER Business Cycle Dates (1854-2020) - Complete list from NBER
+NBER_RECESSION_DATES = [
+    ("1857-06-01", "1858-12-01"),
+    ("1860-10-01", "1861-06-01"),
+    ("1865-04-01", "1867-12-01"),
+    ("1869-06-01", "1870-12-01"),
+    ("1873-10-01", "1879-03-01"),
+    ("1882-03-01", "1885-05-01"),
+    ("1887-03-01", "1888-04-01"),
+    ("1890-07-01", "1891-05-01"),
+    ("1893-01-01", "1894-06-01"),
+    ("1895-12-01", "1897-06-01"),
+    ("1899-06-01", "1900-12-01"),
+    ("1902-09-01", "1904-08-01"),
+    ("1907-05-01", "1908-06-01"),
+    ("1910-01-01", "1912-01-01"),
+    ("1913-01-01", "1914-12-01"),
+    ("1918-08-01", "1919-03-01"),
+    ("1920-01-01", "1921-07-01"),
+    ("1923-05-01", "1924-07-01"),
+    ("1926-10-01", "1927-11-01"),
+    ("1929-08-01", "1933-03-01"),
+    ("1937-05-01", "1938-06-01"),
+    ("1945-02-01", "1945-10-01"),
+    ("1948-11-01", "1949-10-01"),
+    ("1953-07-01", "1954-05-01"),
+    ("1957-08-01", "1958-04-01"),
+    ("1960-04-01", "1961-02-01"),
+    ("1969-12-01", "1970-11-01"),
+    ("1973-11-01", "1975-03-01"),
+    ("1980-01-01", "1980-07-01"),
+    ("1981-07-01", "1982-11-01"),
+    ("1990-07-01", "1991-03-01"),
+    ("2001-03-01", "2001-11-01"),
+    ("2007-12-01", "2009-06-01"),
+    ("2020-02-01", "2020-04-01")
+]
 
 # Session State Management
 if 'api_key_validated' not in st.session_state:
@@ -443,6 +481,9 @@ def validate_fred_api_key(api_key):
 
 def add_technical_indicators_ta(data, column_name='Close'):
     """Add technical indicators using 'ta' package"""
+    if not TA_AVAILABLE:
+        return data
+    
     if data is None or len(data) < 50:
         return data
     
@@ -1021,8 +1062,8 @@ class NBERRecessionAnalysis:
     """Complete NBER recession analysis with detailed metrics"""
     
     @staticmethod
-    def identify_recessions(recession_series):
-        """Identify NBER recession periods from indicator series"""
+    def identify_recessions_from_fred(recession_series):
+        """Identify NBER recession periods from FRED indicator series"""
         if recession_series is None or len(recession_series) == 0:
             return []
         
@@ -1045,6 +1086,20 @@ class NBERRecessionAnalysis:
                 })
         
         return recessions
+    
+    @staticmethod
+    def get_nber_recession_dates():
+        """Return the complete NBER recession dates list"""
+        recession_list = []
+        for peak, trough in NBER_RECESSION_DATES:
+            recession_list.append({
+                'start': pd.to_datetime(peak),
+                'end': pd.to_datetime(trough),
+                'type': 'NBER',
+                'duration_days': (pd.to_datetime(trough) - pd.to_datetime(peak)).days,
+                'duration_months': (pd.to_datetime(trough) - pd.to_datetime(peak)).days / 30.44
+            })
+        return recession_list
     
     @staticmethod
     def calculate_inversion_periods(spreads):
@@ -1434,6 +1489,26 @@ def plot_ohlc_comparison_chart_from_fred(ohlc_data, maturities_to_compare):
             font=dict(family="Inter, sans-serif", size=10)
         )
     )
+    
+    return fig
+
+def add_nber_recession_bars_to_plotly(fig, recessions, y_range=None):
+    """Add NBER recession bars to Plotly figure"""
+    
+    if y_range is None:
+        y_range = [-150, 200]
+    
+    for recession in recessions:
+        fig.add_vrect(
+            x0=recession['start'],
+            x1=recession['end'],
+            fillcolor=COLORS['recession_bar'],
+            opacity=0.3,
+            layer="below",
+            line_width=0,
+            annotation_text="NBER Recession",
+            annotation_position="top left"
+        )
     
     return fig
 
@@ -2322,8 +2397,16 @@ def main():
     if '10Y' in yield_df.columns and '1M' in yield_df.columns:
         spreads['10Y-1M'] = (yield_df['10Y'] - yield_df['1M']) * 100
     
-    # NBER Recession Analysis - COMPLETE
-    recessions = NBERRecessionAnalysis.identify_recessions(recession_series)
+    # NBER Recession Analysis - COMPLETE (using both FRED data and hardcoded dates)
+    recessions_from_fred = NBERRecessionAnalysis.identify_recessions_from_fred(recession_series)
+    recessions_from_nber = NBERRecessionAnalysis.get_nber_recession_dates()
+    
+    # Use FRED data for recent periods, NBER hardcoded for historical context
+    if recessions_from_fred:
+        recessions = recessions_from_fred
+    else:
+        recessions = [r for r in recessions_from_nber if r['start'] >= pd.to_datetime('1990-01-01')]
+    
     inversion_periods = NBERRecessionAnalysis.calculate_inversion_periods(spreads)
     lead_times = NBERRecessionAnalysis.calculate_lead_times(inversion_periods, recessions)
     recession_stats = NBERRecessionAnalysis.get_recession_statistics(recessions, inversion_periods, lead_times)
