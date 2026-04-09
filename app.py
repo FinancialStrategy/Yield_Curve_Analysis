@@ -2371,7 +2371,12 @@ def main():
     
     # Prepare OHLC data from FRED
     with st.spinner("Preparing technical analysis data from FRED..."):
-        ohlc_data = prepare_all_ohlc_from_fred(yield_df)
+        # Bunu şu şekilde değiştirin:
+try:
+    ohlc_data = prepare_all_ohlc_from_fred(yield_df)
+except Exception as e:
+    ohlc_data = None
+    st.warning(f"Technical analysis data could not be prepared: {str(e)}")
     
     # Load data from session state
     yield_df = st.session_state.yield_data
