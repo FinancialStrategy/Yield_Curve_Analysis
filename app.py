@@ -2,11 +2,12 @@
 # HEDGE FUND YIELD CURVE ANALYTICS PLATFORM
 # EXECUTIVE SUMMARY REPORT - INSTITUTIONAL GRADE
 # =============================================================================
-# Version: 26.0 | Executive Summary Focus | No Shortening | Full Implementation
+# Version: 27.0 | Executive Summary Focus | No Shortening | Full Implementation
 # Includes: Nelson-Siegel, Svensson, Dynamic Analysis, Risk Metrics, Arbitrage Detection
 # Executive Summary Focus: 2Y and 10Y Dynamic Charts with Interactive Time Range
 # NBER Recession: Complete recession period analysis with detailed tables
 # OHLC Charts: Yahoo Finance integration with interactive candlestick charts
+# Technical Indicators: Custom implementation (no TA-Lib dependency)
 # Institutional Typography: Professional fonts throughout the application
 # All Tabs: DATA TABLE, 2Y-10Y DYNAMIC CHARTS, OHLC ANALYSIS, SPREAD DYNAMICS, 
 # NS MODEL FIT, NSS MODEL FIT, MODEL COMPARISON, DYNAMIC ANALYSIS, FACTOR ANALYSIS, 
@@ -25,12 +26,9 @@ from scipy import stats
 from scipy.stats import norm
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, WhiteKernel, Matern
 import requests
 import time
 import yfinance as yf
-import talib as ta
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -356,6 +354,114 @@ st.markdown(
 )
 
 # =============================================================================
+# TECHNICAL INDICATORS - CUSTOM IMPLEMENTATION (No TA-Lib)
+# =============================================================================
+
+def calculate_sma(data, period):
+    """Simple Moving Average"""
+    return data.rolling(window=period).mean()
+
+def calculate_ema(data, period):
+    """Exponential Moving Average"""
+    return data.ewm(span=period, adjust=False).mean()
+
+def calculate_rsi(data, period=14):
+    """Relative Strength Index"""
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calculate_macd(data, fast=12, slow=26, signal=9):
+    """MACD - Moving Average Convergence Divergence"""
+    ema_fast = calculate_ema(data, fast)
+    ema_slow = calculate_ema(data, slow)
+    macd_line = ema_fast - ema_slow
+    signal_line = calculate_ema(macd_line, signal)
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
+
+def calculate_bollinger_bands(data, period=20, std_dev=2):
+    """Bollinger Bands"""
+    sma = calculate_sma(data, period)
+    std = data.rolling(window=period).std()
+    upper_band = sma + (std * std_dev)
+    lower_band = sma - (std * std_dev)
+    return upper_band, sma, lower_band
+
+def calculate_atr(high, low, close, period=14):
+    """Average True Range"""
+    high_low = high - low
+    high_close = np.abs(high - close.shift())
+    low_close = np.abs(low - close.shift())
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    atr = tr.rolling(window=period).mean()
+    return atr
+
+def calculate_stochastic(high, low, close, k_period=14, d_period=3):
+    """Stochastic Oscillator"""
+    low_min = low.rolling(window=k_period).min()
+    high_max = high.rolling(window=k_period).max()
+    stoch_k = 100 * ((close - low_min) / (high_max - low_min))
+    stoch_d = stoch_k.rolling(window=d_period).mean()
+    return stoch_k, stoch_d
+
+def calculate_obv(close, volume):
+    """On-Balance Volume"""
+    obv = np.zeros(len(close))
+    obv[0] = volume.iloc[0]
+    for i in range(1, len(close)):
+        if close.iloc[i] > close.iloc[i-1]:
+            obv[i] = obv[i-1] + volume.iloc[i]
+        elif close.iloc[i] < close.iloc[i-1]:
+            obv[i] = obv[i-1] - volume.iloc[i]
+        else:
+            obv[i] = obv[i-1]
+    return pd.Series(obv, index=close.index)
+
+def add_technical_indicators(data):
+    """Add technical indicators using custom implementations"""
+    if data is None or len(data) < 50:
+        return data
+    
+    df = data.copy()
+    
+    try:
+        # Simple Moving Averages
+        df['SMA_20'] = calculate_sma(df['Close'], 20)
+        df['SMA_50'] = calculate_sma(df['Close'], 50)
+        df['SMA_200'] = calculate_sma(df['Close'], 200)
+        
+        # Exponential Moving Averages
+        df['EMA_12'] = calculate_ema(df['Close'], 12)
+        df['EMA_26'] = calculate_ema(df['Close'], 26)
+        
+        # MACD
+        df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = calculate_macd(df['Close'])
+        
+        # RSI
+        df['RSI'] = calculate_rsi(df['Close'], 14)
+        
+        # Bollinger Bands
+        df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = calculate_bollinger_bands(df['Close'])
+        
+        # ATR - Average True Range
+        df['ATR'] = calculate_atr(df['High'], df['Low'], df['Close'], 14)
+        
+        # Stochastic Oscillator
+        df['STOCH_K'], df['STOCH_D'] = calculate_stochastic(df['High'], df['Low'], df['Close'])
+        
+        # Volume indicators
+        df['OBV'] = calculate_obv(df['Close'], df['Volume'])
+        
+    except Exception as e:
+        pass
+    
+    return df
+
+# =============================================================================
 # FRED API FUNCTIONS - COMPLETE DATA FETCHING
 # =============================================================================
 
@@ -444,7 +550,7 @@ def validate_fred_api_key(api_key):
         return False
 
 # =============================================================================
-# YAHOO FINANCE OHLC DATA FETCHING WITH TA-LIB INDICATORS
+# YAHOO FINANCE OHLC DATA FETCHING
 # =============================================================================
 
 @st.cache_data(ttl=3600)
@@ -457,46 +563,6 @@ def fetch_ohlc_data(ticker, start_date, end_date):
         return None
     except Exception as e:
         return None
-
-def add_technical_indicators(data):
-    """Add technical indicators using TA-Lib"""
-    if data is None or len(data) < 50:
-        return data
-    
-    df = data.copy()
-    
-    try:
-        # Simple Moving Averages
-        df['SMA_20'] = ta.SMA(df['Close'], timeperiod=20)
-        df['SMA_50'] = ta.SMA(df['Close'], timeperiod=50)
-        df['SMA_200'] = ta.SMA(df['Close'], timeperiod=200)
-        
-        # Exponential Moving Averages
-        df['EMA_12'] = ta.EMA(df['Close'], timeperiod=12)
-        df['EMA_26'] = ta.EMA(df['Close'], timeperiod=26)
-        
-        # MACD
-        df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = ta.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
-        
-        # RSI
-        df['RSI'] = ta.RSI(df['Close'], timeperiod=14)
-        
-        # Bollinger Bands
-        df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = ta.BBANDS(df['Close'], timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
-        
-        # ATR - Average True Range
-        df['ATR'] = ta.ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
-        
-        # Stochastic Oscillator
-        df['STOCH_K'], df['STOCH_D'] = ta.STOCH(df['High'], df['Low'], df['Close'], fastk_period=14, slowk_period=3, slowd_period=3)
-        
-        # Volume indicators
-        df['OBV'] = ta.OBV(df['Close'], df['Volume'])
-        
-    except Exception as e:
-        pass
-    
-    return df
 
 def fetch_all_ohlc_data_with_indicators(start_date="2020-01-01", end_date=None):
     """Fetch OHLC data with technical indicators for all treasury-related tickers"""
@@ -1194,7 +1260,7 @@ def create_ohlc_candlestick_chart(ohlc_data, ticker, title, height=500):
             showlegend=False
         ))
     
-    # Update layout with dual y-axis and range selectors - FIXED
+    # Update layout with dual y-axis and range selectors
     fig.update_layout(
         title=dict(
             text=title,
@@ -1323,7 +1389,7 @@ def plot_ohlc_comparison_chart(ohlc_data, tickers_to_compare):
     
     return fig
 
-def create_technical_indicators_chart(ohlc_data, ticker, title, height=500):
+def create_technical_indicators_chart(ohlc_data, ticker, title, height=700):
     """Create technical indicators chart with RSI and MACD"""
     
     if ohlc_data is None or ticker not in ohlc_data:
@@ -1391,7 +1457,13 @@ def create_technical_indicators_chart(ohlc_data, ticker, title, height=500):
         ), row=3, col=1)
         
         # MACD Histogram
-        colors_macd = ['#26a69a' if val >= 0 else '#ef5350' for val in data['MACD_Hist']]
+        colors_macd = []
+        for val in data['MACD_Hist']:
+            if not pd.isna(val):
+                colors_macd.append(COLORS['up'] if val >= 0 else COLORS['down'])
+            else:
+                colors_macd.append(COLORS['neutral'])
+        
         fig.add_trace(go.Bar(
             x=data.index, y=data['MACD_Hist'],
             name='Histogram',
@@ -2284,7 +2356,7 @@ def main():
             st.session_state.api_key_validated = False
             st.stop()
     
-    # Fetch OHLC data from Yahoo Finance with TA-Lib indicators
+    # Fetch OHLC data from Yahoo Finance with technical indicators
     if st.session_state.ohlc_data is None:
         with st.spinner("Fetching OHLC data from Yahoo Finance with technical indicators..."):
             ohlc_data = fetch_all_ohlc_data_with_indicators(start_date="2020-01-01")
@@ -3005,7 +3077,7 @@ def main():
         """
         <div style="text-align: center; color: #7f8c8d; font-size: 0.65rem;">
             <p>Yield Curve Analytics | Executive Summary Report | Institutional Quantitative Platform</p>
-            <p>Data: Federal Reserve Economic Data (FRED) | Yahoo Finance | Technical Analysis: TA-Lib</p>
+            <p>Data: Federal Reserve Economic Data (FRED) | Yahoo Finance | Technical Analysis: Custom Implementation</p>
             <p>Models: Nelson-Siegel (1987), Svensson (1994)</p>
             <p>Recession Definition: NBER (National Bureau of Economic Research)</p>
             <p>Last Update: {} UTC</p>
