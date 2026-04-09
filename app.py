@@ -2372,9 +2372,9 @@ def main():
     # Prepare OHLC data from FRED
     with st.spinner("Preparing technical analysis data from FRED..."):
         # Bunu şu şekilde değiştirin:
-try:
+    try:
     ohlc_data = prepare_all_ohlc_from_fred(yield_df)
-except Exception as e:
+    except Exception as e:
     ohlc_data = None
     st.warning(f"Technical analysis data could not be prepared: {str(e)}")
     
