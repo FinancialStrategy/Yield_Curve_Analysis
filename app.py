@@ -2,14 +2,14 @@
 # HEDGE FUND YIELD CURVE ANALYTICS PLATFORM
 # EXECUTIVE SUMMARY REPORT - INSTITUTIONAL GRADE
 # =============================================================================
-# Version: 27.0 | Executive Summary Focus | No Shortening | Full Implementation
+# Version: 28.0 | Executive Summary Focus | No Shortening | Full Implementation
 # Includes: Nelson-Siegel, Svensson, Dynamic Analysis, Risk Metrics, Arbitrage Detection
 # Executive Summary Focus: 2Y and 10Y Dynamic Charts with Interactive Time Range
 # NBER Recession: Complete recession period analysis with detailed tables
-# OHLC Charts: Yahoo Finance integration with interactive candlestick charts
-# Technical Indicators: Custom implementation (no TA-Lib dependency)
+# Technical Indicators: Using 'ta' package (Technical Analysis Library)
+# Data Source: FRED for all yield data (no Yahoo Finance dependency)
 # Institutional Typography: Professional fonts throughout the application
-# All Tabs: DATA TABLE, 2Y-10Y DYNAMIC CHARTS, OHLC ANALYSIS, SPREAD DYNAMICS, 
+# All Tabs: DATA TABLE, 2Y-10Y DYNAMIC CHARTS, TECHNICAL ANALYSIS, SPREAD DYNAMICS, 
 # NS MODEL FIT, NSS MODEL FIT, MODEL COMPARISON, DYNAMIC ANALYSIS, FACTOR ANALYSIS, 
 # RISK METRICS, ARBITRAGE, NBER RECESSION, FORECASTING, DATA EXPORT
 # =============================================================================
@@ -28,9 +28,17 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 import requests
 import time
-import yfinance as yf
 import warnings
 warnings.filterwarnings('ignore')
+
+# Install ta package if not available
+try:
+    import ta
+except ImportError:
+    import subprocess
+    import sys
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "ta"])
+    import ta
 
 # =============================================================================
 # CONFIGURATION - PROFESSIONAL THEME WITH INSTITUTIONAL TYPOGRAPHY
@@ -91,16 +99,6 @@ MATURITY_MAP = {
     '30Y': 30
 }
 
-# Yahoo Finance Tickers for OHLC Charts
-YAHOO_TICKERS = {
-    '^TNX': '10 Year Treasury Yield',
-    '^FVX': '5 Year Treasury Yield',
-    '^IRX': '13 Week Treasury Bill',
-    'TLT': '20+ Year Treasury Bond ETF',
-    'SHY': '1-3 Year Treasury Bond ETF',
-    'IEF': '7-10 Year Treasury Bond ETF'
-}
-
 # Session State Management
 if 'api_key_validated' not in st.session_state:
     st.session_state.api_key_validated = False
@@ -110,8 +108,6 @@ if 'recession_data' not in st.session_state:
     st.session_state.recession_data = None
 if 'data_fetched' not in st.session_state:
     st.session_state.data_fetched = False
-if 'ohlc_data' not in st.session_state:
-    st.session_state.ohlc_data = None
 if 'ns_results' not in st.session_state:
     st.session_state.ns_results = None
 if 'nss_results' not in st.session_state:
@@ -354,114 +350,6 @@ st.markdown(
 )
 
 # =============================================================================
-# TECHNICAL INDICATORS - CUSTOM IMPLEMENTATION (No TA-Lib)
-# =============================================================================
-
-def calculate_sma(data, period):
-    """Simple Moving Average"""
-    return data.rolling(window=period).mean()
-
-def calculate_ema(data, period):
-    """Exponential Moving Average"""
-    return data.ewm(span=period, adjust=False).mean()
-
-def calculate_rsi(data, period=14):
-    """Relative Strength Index"""
-    delta = data.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-def calculate_macd(data, fast=12, slow=26, signal=9):
-    """MACD - Moving Average Convergence Divergence"""
-    ema_fast = calculate_ema(data, fast)
-    ema_slow = calculate_ema(data, slow)
-    macd_line = ema_fast - ema_slow
-    signal_line = calculate_ema(macd_line, signal)
-    histogram = macd_line - signal_line
-    return macd_line, signal_line, histogram
-
-def calculate_bollinger_bands(data, period=20, std_dev=2):
-    """Bollinger Bands"""
-    sma = calculate_sma(data, period)
-    std = data.rolling(window=period).std()
-    upper_band = sma + (std * std_dev)
-    lower_band = sma - (std * std_dev)
-    return upper_band, sma, lower_band
-
-def calculate_atr(high, low, close, period=14):
-    """Average True Range"""
-    high_low = high - low
-    high_close = np.abs(high - close.shift())
-    low_close = np.abs(low - close.shift())
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    atr = tr.rolling(window=period).mean()
-    return atr
-
-def calculate_stochastic(high, low, close, k_period=14, d_period=3):
-    """Stochastic Oscillator"""
-    low_min = low.rolling(window=k_period).min()
-    high_max = high.rolling(window=k_period).max()
-    stoch_k = 100 * ((close - low_min) / (high_max - low_min))
-    stoch_d = stoch_k.rolling(window=d_period).mean()
-    return stoch_k, stoch_d
-
-def calculate_obv(close, volume):
-    """On-Balance Volume"""
-    obv = np.zeros(len(close))
-    obv[0] = volume.iloc[0]
-    for i in range(1, len(close)):
-        if close.iloc[i] > close.iloc[i-1]:
-            obv[i] = obv[i-1] + volume.iloc[i]
-        elif close.iloc[i] < close.iloc[i-1]:
-            obv[i] = obv[i-1] - volume.iloc[i]
-        else:
-            obv[i] = obv[i-1]
-    return pd.Series(obv, index=close.index)
-
-def add_technical_indicators(data):
-    """Add technical indicators using custom implementations"""
-    if data is None or len(data) < 50:
-        return data
-    
-    df = data.copy()
-    
-    try:
-        # Simple Moving Averages
-        df['SMA_20'] = calculate_sma(df['Close'], 20)
-        df['SMA_50'] = calculate_sma(df['Close'], 50)
-        df['SMA_200'] = calculate_sma(df['Close'], 200)
-        
-        # Exponential Moving Averages
-        df['EMA_12'] = calculate_ema(df['Close'], 12)
-        df['EMA_26'] = calculate_ema(df['Close'], 26)
-        
-        # MACD
-        df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = calculate_macd(df['Close'])
-        
-        # RSI
-        df['RSI'] = calculate_rsi(df['Close'], 14)
-        
-        # Bollinger Bands
-        df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = calculate_bollinger_bands(df['Close'])
-        
-        # ATR - Average True Range
-        df['ATR'] = calculate_atr(df['High'], df['Low'], df['Close'], 14)
-        
-        # Stochastic Oscillator
-        df['STOCH_K'], df['STOCH_D'] = calculate_stochastic(df['High'], df['Low'], df['Close'])
-        
-        # Volume indicators
-        df['OBV'] = calculate_obv(df['Close'], df['Volume'])
-        
-    except Exception as e:
-        pass
-    
-    return df
-
-# =============================================================================
 # FRED API FUNCTIONS - COMPLETE DATA FETCHING
 # =============================================================================
 
@@ -550,46 +438,113 @@ def validate_fred_api_key(api_key):
         return False
 
 # =============================================================================
-# YAHOO FINANCE OHLC DATA FETCHING
+# TECHNICAL INDICATORS USING 'ta' PACKAGE
 # =============================================================================
 
-@st.cache_data(ttl=3600)
-def fetch_ohlc_data(ticker, start_date, end_date):
-    """Fetch OHLC data from Yahoo Finance"""
+def add_technical_indicators_ta(data, column_name='Close'):
+    """Add technical indicators using 'ta' package"""
+    if data is None or len(data) < 50:
+        return data
+    
+    df = data.copy()
+    
     try:
-        data = yf.download(ticker, start=start_date, end=end_date, progress=False)
-        if not data.empty:
-            return data
-        return None
+        # Make sure we have a proper index
+        df = df.reset_index(drop=False)
+        df.columns = ['Date'] + [col for col in df.columns if col != 'Date']
+        
+        # Create a copy with the price column
+        price_series = pd.Series(df[column_name].values, index=pd.RangeIndex(len(df)))
+        
+        # Simple Moving Averages
+        df['SMA_20'] = ta.trend.sma_indicator(price_series, window=20)
+        df['SMA_50'] = ta.trend.sma_indicator(price_series, window=50)
+        df['SMA_200'] = ta.trend.sma_indicator(price_series, window=200)
+        
+        # Exponential Moving Averages
+        df['EMA_12'] = ta.trend.ema_indicator(price_series, window=12)
+        df['EMA_26'] = ta.trend.ema_indicator(price_series, window=26)
+        
+        # MACD
+        macd = ta.trend.MACD(price_series)
+        df['MACD'] = macd.macd()
+        df['MACD_Signal'] = macd.macd_signal()
+        df['MACD_Hist'] = macd.macd_diff()
+        
+        # RSI
+        df['RSI'] = ta.momentum.RSIIndicator(price_series, window=14).rsi()
+        
+        # Bollinger Bands
+        bollinger = ta.volatility.BollingerBands(price_series, window=20, window_dev=2)
+        df['BB_Upper'] = bollinger.bollinger_hband()
+        df['BB_Middle'] = bollinger.bollinger_mavg()
+        df['BB_Lower'] = bollinger.bollinger_lband()
+        
+        # ATR - Average True Range (needs High, Low, Close)
+        if 'High' in df.columns and 'Low' in df.columns:
+            high_series = pd.Series(df['High'].values, index=pd.RangeIndex(len(df)))
+            low_series = pd.Series(df['Low'].values, index=pd.RangeIndex(len(df)))
+            close_series = pd.Series(df['Close'].values, index=pd.RangeIndex(len(df)))
+            df['ATR'] = ta.volatility.AverageTrueRange(high_series, low_series, close_series, window=14).average_true_range()
+        
+        # Stochastic Oscillator
+        if 'High' in df.columns and 'Low' in df.columns:
+            high_series = pd.Series(df['High'].values, index=pd.RangeIndex(len(df)))
+            low_series = pd.Series(df['Low'].values, index=pd.RangeIndex(len(df)))
+            close_series = pd.Series(df['Close'].values, index=pd.RangeIndex(len(df)))
+            stoch = ta.momentum.StochasticOscillator(high_series, low_series, close_series, window=14, smooth_window=3)
+            df['STOCH_K'] = stoch.stoch()
+            df['STOCH_D'] = stoch.stoch_signal()
+        
+        # OBV - On-Balance Volume
+        if 'Volume' in df.columns:
+            volume_series = pd.Series(df['Volume'].values, index=pd.RangeIndex(len(df)))
+            df['OBV'] = ta.volume.OnBalanceVolumeIndicator(price_series, volume_series).on_balance_volume()
+        
+        # Set Date as index again
+        df.set_index('Date', inplace=True)
+        
     except Exception as e:
-        return None
+        pass
+    
+    return df
 
-def fetch_all_ohlc_data_with_indicators(start_date="2020-01-01", end_date=None):
-    """Fetch OHLC data with technical indicators for all treasury-related tickers"""
-    if end_date is None:
-        end_date = datetime.now().strftime('%Y-%m-%d')
+def create_ohlc_from_fred_data(yield_series, maturity_name):
+    """Create OHLC-like data from FRED yield data (using daily close as all OHLC values)"""
+    if yield_series is None or len(yield_series) < 2:
+        return None
     
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    all_data = {}
-    total = len(YAHOO_TICKERS)
+    df = pd.DataFrame(index=yield_series.index)
+    df['Close'] = yield_series.values
+    df['Open'] = yield_series.shift(1).fillna(yield_series).values
+    df['High'] = df[['Close', 'Open']].max(axis=1)
+    df['Low'] = df[['Close', 'Open']].min(axis=1)
+    df['Volume'] = 0  # Volume not available from FRED
     
-    for idx, (ticker, name) in enumerate(YAHOO_TICKERS.items()):
-        status_text.text(f"Fetching OHLC data for {name} ({ticker})...")
-        data = fetch_ohlc_data(ticker, start_date, end_date)
-        if data is not None:
-            data_with_indicators = add_technical_indicators(data)
-            all_data[ticker] = {
-                'name': name,
-                'data': data_with_indicators
-            }
-        progress_bar.progress((idx + 1) / total)
-        time.sleep(0.1)
+    # Calculate returns
+    df['Return'] = df['Close'].pct_change() * 100
+    df['Return_Change'] = df['Return'].diff()
     
-    status_text.empty()
-    progress_bar.empty()
+    # Add technical indicators
+    df = add_technical_indicators_ta(df, 'Close')
     
-    return all_data if all_data else None
+    return df
+
+def prepare_all_ohlc_from_fred(yield_df):
+    """Prepare OHLC data for all maturities from FRED data"""
+    ohlc_data = {}
+    
+    for maturity in ['1M', '3M', '6M', '1Y', '2Y', '3Y', '5Y', '7Y', '10Y', '20Y', '30Y']:
+        if maturity in yield_df.columns:
+            ohlc = create_ohlc_from_fred_data(yield_df[maturity], maturity)
+            if ohlc is not None:
+                ohlc_data[maturity] = {
+                    'name': f'{maturity} Treasury Yield',
+                    'data': ohlc,
+                    'maturity_years': MATURITY_MAP[maturity]
+                }
+    
+    return ohlc_data
 
 # =============================================================================
 # NELSON-SIEGEL MODEL FAMILY - COMPLETE IMPLEMENTATION
@@ -1182,16 +1137,16 @@ class NBERRecessionAnalysis:
         }
 
 # =============================================================================
-# OHLC CHART FUNCTIONS - COMPLETE WITH INTERACTIVE RANGE SELECTORS
+# OHLC CHART FUNCTIONS - USING FRED DATA
 # =============================================================================
 
-def create_ohlc_candlestick_chart(ohlc_data, ticker, title, height=500):
-    """Create interactive candlestick chart with range selectors"""
+def create_ohlc_candlestick_chart_from_fred(ohlc_data, maturity, title, height=500):
+    """Create interactive candlestick chart using FRED data"""
     
-    if ohlc_data is None or ticker not in ohlc_data:
+    if ohlc_data is None or maturity not in ohlc_data:
         return None
     
-    data = ohlc_data[ticker]['data']
+    data = ohlc_data[maturity]['data']
     
     fig = go.Figure(data=[go.Candlestick(
         x=data.index,
@@ -1199,22 +1154,11 @@ def create_ohlc_candlestick_chart(ohlc_data, ticker, title, height=500):
         high=data['High'],
         low=data['Low'],
         close=data['Close'],
-        name='OHLC',
+        name='Yield',
         increasing=dict(line=dict(color=COLORS['up']), fillcolor=COLORS['up']),
         decreasing=dict(line=dict(color=COLORS['down']), fillcolor=COLORS['down']),
         showlegend=False
     )])
-    
-    # Add volume bars as background
-    fig.add_trace(go.Bar(
-        x=data.index,
-        y=data['Volume'],
-        name='Volume',
-        marker_color=COLORS['accent'],
-        opacity=0.3,
-        yaxis='y2',
-        showlegend=False
-    ))
     
     # Add moving averages if they exist
     if 'SMA_20' in data.columns and data['SMA_20'].notna().any():
@@ -1260,7 +1204,7 @@ def create_ohlc_candlestick_chart(ohlc_data, ticker, title, height=500):
             showlegend=False
         ))
     
-    # Update layout with dual y-axis and range selectors
+    # Update layout with range selectors
     fig.update_layout(
         title=dict(
             text=title,
@@ -1289,18 +1233,12 @@ def create_ohlc_candlestick_chart(ohlc_data, ticker, title, height=500):
             showgrid=True
         ),
         yaxis=dict(
-            title=dict(text="Price", font=dict(family="Inter, sans-serif", size=10)),
+            title=dict(text="Yield (%)", font=dict(family="Inter, sans-serif", size=10)),
             side='left',
             gridcolor=COLORS['grid'],
             showgrid=True,
-            tickfont=dict(family="JetBrains Mono, monospace", size=9)
-        ),
-        yaxis2=dict(
-            title=dict(text="Volume", font=dict(family="Inter, sans-serif", size=10)),
-            overlaying='y',
-            side='right',
-            showgrid=False,
-            tickfont=dict(family="JetBrains Mono, monospace", size=9)
+            tickfont=dict(family="JetBrains Mono, monospace", size=9),
+            ticksuffix="%"
         ),
         paper_bgcolor=COLORS['surface'],
         plot_bgcolor=COLORS['surface'],
@@ -1319,83 +1257,13 @@ def create_ohlc_candlestick_chart(ohlc_data, ticker, title, height=500):
     
     return fig
 
-def plot_ohlc_comparison_chart(ohlc_data, tickers_to_compare):
-    """Create comparison chart for multiple OHLC series"""
+def create_technical_indicators_chart_from_fred(ohlc_data, maturity, title, height=700):
+    """Create technical indicators chart (RSI, MACD) using FRED data"""
     
-    fig = go.Figure()
-    
-    colors = [COLORS['accent'], COLORS['positive'], COLORS['warning'], COLORS['negative'], COLORS['neutral'], '#9b59b6']
-    color_idx = 0
-    
-    for ticker in tickers_to_compare:
-        if ticker in ohlc_data:
-            data = ohlc_data[ticker]['data']
-            normalized = (data['Close'] / data['Close'].iloc[0] - 1) * 100
-            fig.add_trace(go.Scatter(
-                x=data.index,
-                y=normalized,
-                mode='lines',
-                name=ohlc_data[ticker]['name'],
-                line=dict(color=colors[color_idx % len(colors)], width=1.5)
-            ))
-            color_idx += 1
-    
-    fig.update_layout(
-        title=dict(
-            text="Treasury Securities Performance Comparison (Normalized to 100)",
-            font=dict(family="Inter, sans-serif", size=14, color=COLORS['text_primary']),
-            x=0.02,
-            xanchor='left'
-        ),
-        xaxis=dict(
-            title=dict(text="Date", font=dict(family="Inter, sans-serif", size=10)),
-            rangeselector=dict(
-                buttons=list([
-                    dict(count=7, label="1W", step="day", stepmode="backward"),
-                    dict(count=15, label="15D", step="day", stepmode="backward"),
-                    dict(count=30, label="1M", step="day", stepmode="backward"),
-                    dict(count=45, label="45D", step="day", stepmode="backward"),
-                    dict(count=60, label="2M", step="day", stepmode="backward"),
-                    dict(count=180, label="6M", step="day", stepmode="backward"),
-                    dict(count=1, label="YTD", step="year", stepmode="backward"),
-                    dict(count=365, label="1Y", step="day", stepmode="backward"),
-                    dict(step="all", label="ALL")
-                ])
-            ),
-            rangeslider=dict(visible=True, thickness=0.05),
-            type="date",
-            gridcolor=COLORS['grid']
-        ),
-        yaxis=dict(
-            title=dict(text="Return (%)", font=dict(family="Inter, sans-serif", size=10)),
-            gridcolor=COLORS['grid'],
-            tickformat='.1f',
-            tickfont=dict(family="JetBrains Mono, monospace", size=9)
-        ),
-        paper_bgcolor=COLORS['surface'],
-        plot_bgcolor=COLORS['surface'],
-        height=500,
-        hovermode='x unified',
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-            bgcolor='rgba(0,0,0,0)',
-            font=dict(family="Inter, sans-serif", size=10)
-        )
-    )
-    
-    return fig
-
-def create_technical_indicators_chart(ohlc_data, ticker, title, height=700):
-    """Create technical indicators chart with RSI and MACD"""
-    
-    if ohlc_data is None or ticker not in ohlc_data:
+    if ohlc_data is None or maturity not in ohlc_data:
         return None
     
-    data = ohlc_data[ticker]['data']
+    data = ohlc_data[maturity]['data']
     
     fig = make_subplots(
         rows=3, cols=1,
@@ -1412,7 +1280,7 @@ def create_technical_indicators_chart(ohlc_data, ticker, title, height=700):
         high=data['High'],
         low=data['Low'],
         close=data['Close'],
-        name='Price',
+        name='Yield',
         increasing=dict(line=dict(color=COLORS['up']), fillcolor=COLORS['up']),
         decreasing=dict(line=dict(color=COLORS['down']), fillcolor=COLORS['down']),
         showlegend=False
@@ -1499,6 +1367,76 @@ def create_technical_indicators_chart(ohlc_data, ticker, title, height=700):
     
     return fig
 
+def plot_ohlc_comparison_chart_from_fred(ohlc_data, maturities_to_compare):
+    """Create comparison chart for multiple yield series from FRED data"""
+    
+    fig = go.Figure()
+    
+    colors = [COLORS['accent'], COLORS['positive'], COLORS['warning'], COLORS['negative'], COLORS['neutral'], '#9b59b6']
+    color_idx = 0
+    
+    for maturity in maturities_to_compare:
+        if maturity in ohlc_data:
+            data = ohlc_data[maturity]['data']
+            normalized = (data['Close'] / data['Close'].iloc[0] - 1) * 100
+            fig.add_trace(go.Scatter(
+                x=data.index,
+                y=normalized,
+                mode='lines',
+                name=ohlc_data[maturity]['name'],
+                line=dict(color=colors[color_idx % len(colors)], width=1.5)
+            ))
+            color_idx += 1
+    
+    fig.update_layout(
+        title=dict(
+            text="Treasury Yields Performance Comparison (Normalized to 100)",
+            font=dict(family="Inter, sans-serif", size=14, color=COLORS['text_primary']),
+            x=0.02,
+            xanchor='left'
+        ),
+        xaxis=dict(
+            title=dict(text="Date", font=dict(family="Inter, sans-serif", size=10)),
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=7, label="1W", step="day", stepmode="backward"),
+                    dict(count=15, label="15D", step="day", stepmode="backward"),
+                    dict(count=30, label="1M", step="day", stepmode="backward"),
+                    dict(count=45, label="45D", step="day", stepmode="backward"),
+                    dict(count=60, label="2M", step="day", stepmode="backward"),
+                    dict(count=180, label="6M", step="day", stepmode="backward"),
+                    dict(count=1, label="YTD", step="year", stepmode="backward"),
+                    dict(count=365, label="1Y", step="day", stepmode="backward"),
+                    dict(step="all", label="ALL")
+                ])
+            ),
+            rangeslider=dict(visible=True, thickness=0.05),
+            type="date",
+            gridcolor=COLORS['grid']
+        ),
+        yaxis=dict(
+            title=dict(text="Return (%)", font=dict(family="Inter, sans-serif", size=10)),
+            gridcolor=COLORS['grid'],
+            tickformat='.1f',
+            tickfont=dict(family="JetBrains Mono, monospace", size=9)
+        ),
+        paper_bgcolor=COLORS['surface'],
+        plot_bgcolor=COLORS['surface'],
+        height=500,
+        hovermode='x unified',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            bgcolor='rgba(0,0,0,0)',
+            font=dict(family="Inter, sans-serif", size=10)
+        )
+    )
+    
+    return fig
+
 # =============================================================================
 # VISUALIZATION FUNCTIONS - COMPLETE SET
 # =============================================================================
@@ -1552,7 +1490,7 @@ def create_institutional_layout(fig, title, y_title=None, height=500):
     return fig
 
 def plot_2y_yield_chart(yield_df):
-    """Create interactive 2Y yield chart with range slider - FIXED"""
+    """Create interactive 2Y yield chart with range slider"""
     if '2Y' not in yield_df.columns:
         return None
     
@@ -1594,7 +1532,7 @@ def plot_2y_yield_chart(yield_df):
     return fig
 
 def plot_10y_yield_chart(yield_df):
-    """Create interactive 10Y yield chart with range slider - FIXED"""
+    """Create interactive 10Y yield chart with range slider"""
     if '10Y' not in yield_df.columns:
         return None
     
@@ -1722,7 +1660,7 @@ def plot_lead_time_distribution(lead_times):
     return fig
 
 def plot_spread_dashboard(spreads, recessions):
-    """Create comprehensive spread dashboard with 4 subplots - FIXED hovertemplate"""
+    """Create comprehensive spread dashboard with 4 subplots"""
     fig = make_subplots(
         rows=2,
         cols=2,
@@ -2356,17 +2294,13 @@ def main():
             st.session_state.api_key_validated = False
             st.stop()
     
-    # Fetch OHLC data from Yahoo Finance with technical indicators
-    if st.session_state.ohlc_data is None:
-        with st.spinner("Fetching OHLC data from Yahoo Finance with technical indicators..."):
-            ohlc_data = fetch_all_ohlc_data_with_indicators(start_date="2020-01-01")
-            if ohlc_data is not None:
-                st.session_state.ohlc_data = ohlc_data
+    # Prepare OHLC data from FRED
+    with st.spinner("Preparing technical analysis data from FRED..."):
+        ohlc_data = prepare_all_ohlc_from_fred(yield_df)
     
     # Load data from session state
     yield_df = st.session_state.yield_data
     recession_series = st.session_state.recession_data
-    ohlc_data = st.session_state.ohlc_data
     
     # Prepare data structures
     available_cols = [col for col in yield_df.columns if col in MATURITY_MAP]
@@ -2445,14 +2379,13 @@ def main():
             st.session_state.data_fetched = False
             st.session_state.yield_data = None
             st.session_state.recession_data = None
-            st.session_state.ohlc_data = None
             st.rerun()
     
     # ===== TABS =====
     tabs = st.tabs([
         "📊 DATA TABLE",
         "📈 2Y & 10Y DYNAMIC CHARTS",
-        "🕯️ OHLC ANALYSIS",
+        "📊 TECHNICAL ANALYSIS",
         "📈 SPREAD DYNAMICS",
         "🔬 NS MODEL FIT",
         "📉 NSS MODEL FIT",
@@ -2596,69 +2529,135 @@ def main():
             )
             st.plotly_chart(fig_spread, use_container_width=True)
     
-    # ===== TAB 3: OHLC ANALYSIS =====
+    # ===== TAB 3: TECHNICAL ANALYSIS (from FRED data) =====
     with tabs[2]:
-        st.markdown("### Treasury Yield OHLC Analysis (2020 - Present)")
-        st.markdown("*Interactive candlestick charts with technical indicators (SMA, RSI, MACD) - Data from Yahoo Finance*")
+        st.markdown("### Treasury Yield Technical Analysis (FRED Data)")
+        st.markdown("*Technical indicators using 'ta' package - SMA, RSI, MACD, Bollinger Bands*")
         
         if ohlc_data is not None:
             # 10-Year Treasury Yield Chart with Technical Indicators
-            st.markdown("#### 10-Year Treasury Yield (^TNX) - Technical Analysis")
-            fig_tnx_tech = create_technical_indicators_chart(ohlc_data, '^TNX', "10-Year Treasury Yield - Technical Analysis", height=700)
-            if fig_tnx_tech:
-                st.plotly_chart(fig_tnx_tech, use_container_width=True)
+            st.markdown("#### 10-Year Treasury Yield - Technical Analysis")
+            fig_10y_tech = create_technical_indicators_chart_from_fred(ohlc_data, '10Y', "10-Year Treasury Yield - Technical Analysis", height=700)
+            if fig_10y_tech:
+                st.plotly_chart(fig_10y_tech, use_container_width=True)
             else:
                 st.warning("10-Year Treasury data not available")
             
-            # 5-Year Treasury Yield Chart
-            st.markdown("#### 5-Year Treasury Yield (^FVX)")
-            fig_fvx = create_ohlc_candlestick_chart(ohlc_data, '^FVX', "5-Year Treasury Yield - Daily OHLC", height=500)
-            if fig_fvx:
-                st.plotly_chart(fig_fvx, use_container_width=True)
+            # 2-Year Treasury Yield Chart with Technical Indicators
+            st.markdown("#### 2-Year Treasury Yield - Technical Analysis")
+            fig_2y_tech = create_technical_indicators_chart_from_fred(ohlc_data, '2Y', "2-Year Treasury Yield - Technical Analysis", height=700)
+            if fig_2y_tech:
+                st.plotly_chart(fig_2y_tech, use_container_width=True)
             else:
-                st.warning("5-Year Treasury data not available")
+                st.warning("2-Year Treasury data not available")
             
-            # 13-Week Treasury Bill Chart
-            st.markdown("#### 13-Week Treasury Bill (^IRX)")
-            fig_irx = create_ohlc_candlestick_chart(ohlc_data, '^IRX', "13-Week Treasury Bill - Daily OHLC", height=500)
-            if fig_irx:
-                st.plotly_chart(fig_irx, use_container_width=True)
+            # 30-Year Treasury Yield Chart
+            st.markdown("#### 30-Year Treasury Yield")
+            fig_30y = create_ohlc_candlestick_chart_from_fred(ohlc_data, '30Y', "30-Year Treasury Yield - Daily", height=500)
+            if fig_30y:
+                st.plotly_chart(fig_30y, use_container_width=True)
             else:
-                st.warning("13-Week Treasury Bill data not available")
+                st.warning("30-Year Treasury data not available")
             
-            # Treasury ETFs Comparison
-            st.markdown("#### Treasury ETFs Performance Comparison")
-            fig_etf_compare = plot_ohlc_comparison_chart(ohlc_data, ['TLT', 'SHY', 'IEF'])
-            if fig_etf_compare:
-                st.plotly_chart(fig_etf_compare, use_container_width=True)
+            # Yield Comparison Chart
+            st.markdown("#### Treasury Yields Performance Comparison (Normalized)")
+            fig_compare = plot_ohlc_comparison_chart_from_fred(ohlc_data, ['1M', '3M', '6M', '1Y', '2Y', '5Y', '10Y', '30Y'])
+            if fig_compare:
+                st.plotly_chart(fig_compare, use_container_width=True)
             
-            # All Treasury Securities Comparison
-            st.markdown("#### All Treasury Securities Performance Comparison")
-            fig_all_compare = plot_ohlc_comparison_chart(ohlc_data, ['^TNX', '^FVX', '^IRX', 'TLT', 'SHY', 'IEF'])
-            if fig_all_compare:
-                st.plotly_chart(fig_all_compare, use_container_width=True)
+            # Technical Indicators Summary
+            st.markdown("#### Technical Indicators Summary")
             
-            # OHLC Data Summary
-            st.markdown("#### OHLC Data Summary")
-            ohlc_summary_data = []
-            for ticker, info in ohlc_data.items():
-                data = info['data']
-                ohlc_summary_data.append({
-                    'Ticker': ticker,
-                    'Name': info['name'],
-                    'Start Date': data.index[0].strftime('%Y-%m-%d'),
-                    'End Date': data.index[-1].strftime('%Y-%m-%d'),
-                    'Observations': len(data),
-                    'Latest Close': "${:.2f}".format(data['Close'].iloc[-1]) if ticker in ['TLT', 'SHY', 'IEF'] else "{:.2f}%".format(data['Close'].iloc[-1]),
-                    '52W High': "${:.2f}".format(data['High'].max()) if ticker in ['TLT', 'SHY', 'IEF'] else "{:.2f}%".format(data['High'].max()),
-                    '52W Low': "${:.2f}".format(data['Low'].min()) if ticker in ['TLT', 'SHY', 'IEF'] else "{:.2f}%".format(data['Low'].min())
-                })
+            # Get latest data for 10Y
+            if '10Y' in ohlc_data:
+                latest_data = ohlc_data['10Y']['data'].iloc[-1]
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    rsi_val = latest_data['RSI'] if 'RSI' in latest_data and not pd.isna(latest_data['RSI']) else 50
+                    rsi_status = "Overbought" if rsi_val > 70 else "Oversold" if rsi_val < 30 else "Neutral"
+                    rsi_color = COLORS['negative'] if rsi_val > 70 else COLORS['positive'] if rsi_val < 30 else COLORS['neutral']
+                    st.markdown(
+                        f'<div class="metric-card">'
+                        f'<div class="metric-label">RSI (14)</div>'
+                        f'<div class="metric-value" style="color: {rsi_color};">{rsi_val:.1f}</div>'
+                        f'<div class="metric-label">{rsi_status}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                
+                with col2:
+                    macd_val = latest_data['MACD'] if 'MACD' in latest_data and not pd.isna(latest_data['MACD']) else 0
+                    macd_signal = latest_data['MACD_Signal'] if 'MACD_Signal' in latest_data and not pd.isna(latest_data['MACD_Signal']) else 0
+                    macd_status = "Bullish" if macd_val > macd_signal else "Bearish"
+                    macd_color = COLORS['positive'] if macd_val > macd_signal else COLORS['negative']
+                    st.markdown(
+                        f'<div class="metric-card">'
+                        f'<div class="metric-label">MACD</div>'
+                        f'<div class="metric-value" style="color: {macd_color};">{macd_val:.4f}</div>'
+                        f'<div class="metric-label">{macd_status}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                
+                with col3:
+                    bb_position = None
+                    if 'BB_Upper' in latest_data and 'BB_Lower' in latest_data and not pd.isna(latest_data['BB_Upper']):
+                        close_val = latest_data['Close']
+                        if close_val > latest_data['BB_Upper']:
+                            bb_position = "Above Upper Band"
+                            bb_color = COLORS['negative']
+                        elif close_val < latest_data['BB_Lower']:
+                            bb_position = "Below Lower Band"
+                            bb_color = COLORS['positive']
+                        else:
+                            bb_position = "Within Bands"
+                            bb_color = COLORS['neutral']
+                        st.markdown(
+                            f'<div class="metric-card">'
+                            f'<div class="metric-label">Bollinger Bands</div>'
+                            f'<div class="metric-value" style="color: {bb_color};">{bb_position}</div>'
+                            f'<div class="metric-label">20-period, 2 std dev</div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                
+                with col4:
+                    sma_val = latest_data['SMA_20'] if 'SMA_20' in latest_data and not pd.isna(latest_data['SMA_20']) else 0
+                    close_val = latest_data['Close']
+                    sma_status = "Above SMA" if close_val > sma_val else "Below SMA"
+                    sma_color = COLORS['positive'] if close_val > sma_val else COLORS['negative']
+                    st.markdown(
+                        f'<div class="metric-card">'
+                        f'<div class="metric-label">SMA 20</div>'
+                        f'<div class="metric-value" style="color: {sma_color};">{sma_val:.2f}%</div>'
+                        f'<div class="metric-label">{sma_status}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
             
-            ohlc_summary_df = pd.DataFrame(ohlc_summary_data)
-            st.dataframe(ohlc_summary_df, use_container_width=True, hide_index=True)
+            # Returns and volatility analysis
+            st.markdown("#### Returns & Volatility Analysis")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if '10Y' in ohlc_data:
+                    returns = ohlc_data['10Y']['data']['Return'].dropna()
+                    st.metric("10Y Average Daily Return", "{:.4f}%".format(returns.mean()), 
+                             delta="{:.4f}%".format(returns.iloc[-1]) if len(returns) > 0 else None)
+                    st.metric("10Y Daily Volatility", "{:.4f}%".format(returns.std()))
+            
+            with col2:
+                if '2Y' in ohlc_data:
+                    returns_2y = ohlc_data['2Y']['data']['Return'].dropna()
+                    st.metric("2Y Average Daily Return", "{:.4f}%".format(returns_2y.mean()),
+                             delta="{:.4f}%".format(returns_2y.iloc[-1]) if len(returns_2y) > 0 else None)
+                    st.metric("2Y Daily Volatility", "{:.4f}%".format(returns_2y.std()))
             
         else:
-            st.warning("OHLC data could not be fetched from Yahoo Finance. Please check your internet connection.")
+            st.warning("Technical analysis data could not be prepared from FRED data.")
     
     # ===== TAB 4: SPREAD DYNAMICS =====
     with tabs[3]:
@@ -3077,7 +3076,7 @@ def main():
         """
         <div style="text-align: center; color: #7f8c8d; font-size: 0.65rem;">
             <p>Yield Curve Analytics | Executive Summary Report | Institutional Quantitative Platform</p>
-            <p>Data: Federal Reserve Economic Data (FRED) | Yahoo Finance | Technical Analysis: Custom Implementation</p>
+            <p>Data: Federal Reserve Economic Data (FRED) | Technical Analysis: 'ta' package</p>
             <p>Models: Nelson-Siegel (1987), Svensson (1994)</p>
             <p>Recession Definition: NBER (National Bureau of Economic Research)</p>
             <p>Last Update: {} UTC</p>
