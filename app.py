@@ -3046,54 +3046,192 @@ def main():
                 st.dataframe(mispriced_df, use_container_width=True, hide_index=True)
     
     # ===== TAB 12: NBER RECESSION DETAILS =====
-    with tabs[11]:
-        st.markdown("### NBER Recession Analysis - Detailed View")
-        st.markdown("*Complete historical analysis of NBER recession periods, yield curve inversions, and lead times*")
-        
-        st.plotly_chart(plot_nber_recession_chart(spreads, recessions), use_container_width=True)
-        
-        fig_inv = plot_inversion_periods_chart(inversion_periods)
-        if fig_inv:
-            st.plotly_chart(fig_inv, use_container_width=True)
-        
-        fig_lead = plot_lead_time_distribution(lead_times)
-        if fig_lead:
-            st.plotly_chart(fig_lead, use_container_width=True)
-        
-        render_recession_periods_table(recessions)
-        render_inversion_periods_table(inversion_periods)
-        render_lead_times_table(lead_times)
-        
-        st.markdown("#### 📊 Summary Statistics")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**Recession Statistics**")
-            st.markdown(f"""
-            - Total Recessions: {recession_stats['total_recessions']}
-            - Average Duration: {recession_stats['avg_recession_duration_days']:.0f} days ({recession_stats['avg_recession_duration_months']:.1f} months)
-            - Longest Recession: {recession_stats['longest_recession_days']:.0f} days
-            - Shortest Recession: {recession_stats['shortest_recession_days']:.0f} days
-            """)
-        
-        with col2:
-            st.markdown("**Inversion Statistics**")
-            st.markdown(f"""
-            - Total Inversions: {recession_stats['total_inversions']}
-            - Average Inversion Duration: {recession_stats['avg_inversion_duration_days']:.0f} days
-            - Average Inversion Depth: {recession_stats['avg_inversion_depth_bps']:.1f} bps
-            - Max Inversion Depth: {recession_stats['max_inversion_depth_bps']:.1f} bps
-            """)
-        
-        st.markdown("**Lead Time Statistics**")
+    # ===== TAB 12: NBER RECESSION DETAILS (DÜZELTİLMİŞ - GÖLGELİ CHART EKLENDİ) =====
+with tabs[11]:
+    st.markdown("### NBER Recession Analysis - Detailed View")
+    st.markdown("*Complete historical analysis of NBER recession periods, yield curve inversions, and lead times*")
+    
+    # NBER GÖLGELİ CHART - ANA GRAFİK
+    st.markdown("#### NBER Recession Periods with Yield Curve Inversion Shading")
+    
+    # Ana NBER resesyon gölgeli chart
+    fig_nber_main = go.Figure()
+    
+    # 10Y-2Y spread çizgisi
+    if '10Y-2Y' in spreads.columns:
+        fig_nber_main.add_trace(go.Scatter(
+            x=spreads.index,
+            y=spreads['10Y-2Y'],
+            mode='lines',
+            name='10Y-2Y Spread',
+            line=dict(color=COLORS['negative'], width=2),
+            hovertemplate='<b>Date: %{x|%Y-%m-%d}</b><br>Spread: %{y:.1f} bps<extra></extra>'
+        ))
+    
+    # Sıfır çizgisi (inversion threshold)
+    fig_nber_main.add_hline(
+        y=0,
+        line_dash="dash",
+        line_color=COLORS['neutral'],
+        line_width=1.5,
+        annotation_text="INVERSION THRESHOLD",
+        annotation_position="top right"
+    )
+    
+    # NBER resesyon gölgelendirmeleri - ANA ÖZELLİK
+    for recession in recessions:
+        fig_nber_main.add_vrect(
+            x0=recession['start'],
+            x1=recession['end'],
+            fillcolor=COLORS['recession_bar'],
+            opacity=0.4,
+            layer="below",
+            line_width=0,
+            annotation_text="NBER RECESSION",
+            annotation_position="top left"
+        )
+    
+    # Ayrıca inversion dönemlerini de farklı renkte gölgele
+    for inversion in inversion_periods:
+        fig_nber_main.add_vrect(
+            x0=inversion['start'],
+            x1=inversion['end'],
+            fillcolor=COLORS['negative'],
+            opacity=0.15,
+            layer="below",
+            line_width=0,
+            annotation_text="Inversion Period",
+            annotation_position="bottom left"
+        )
+    
+    fig_nber_main = create_institutional_layout(
+        fig_nber_main, 
+        "NBER RECESSION PERIODS & YIELD CURVE INVERSIONS (1990-Present)", 
+        "Spread (bps)", 
+        height=550
+    )
+    
+    # X ekseni range selector ekle
+    fig_nber_main.update_layout(
+        xaxis=dict(
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(count=5, label="5Y", step="year", stepmode="backward"),
+                    dict(count=10, label="10Y", step="year", stepmode="backward"),
+                    dict(count=20, label="20Y", step="year", stepmode="backward"),
+                    dict(step="all", label="ALL")
+                ])
+            ),
+            rangeslider=dict(visible=True, thickness=0.05),
+            type="date"
+        )
+    )
+    
+    st.plotly_chart(fig_nber_main, use_container_width=True)
+    
+    # İkincil grafik - Sadece NBER resesyon gölgeleri (daha detaylı)
+    st.markdown("#### Detailed NBER Recession Shading Analysis")
+    
+    fig_nber_detailed = go.Figure()
+    
+    # 10Y-2Y spread
+    if '10Y-2Y' in spreads.columns:
+        fig_nber_detailed.add_trace(go.Scatter(
+            x=spreads.index,
+            y=spreads['10Y-2Y'],
+            mode='lines',
+            name='10Y-2Y Spread',
+            line=dict(color=COLORS['accent'], width=2),
+            fill='tozeroy',
+            fillcolor='rgba(15, 52, 96, 0.1)'
+        ))
+    
+    # Sıfır çizgisi
+    fig_nber_detailed.add_hline(y=0, line_dash="dash", line_color=COLORS['negative'], line_width=1)
+    
+    # NBER resesyon gölgelendirmeleri
+    for recession in recessions:
+        fig_nber_detailed.add_vrect(
+            x0=recession['start'],
+            x1=recession['end'],
+            fillcolor=COLORS['recession_bar'],
+            opacity=0.35,
+            layer="below",
+            line_width=0,
+            annotation_text=recession['start'].strftime('%Y-%m') if recession['start'].year >= 1990 else "",
+            annotation_position="top left"
+        )
+    
+    fig_nber_detailed = create_institutional_layout(
+        fig_nber_detailed, 
+        "NBER RECESSION SHADING ANALYSIS", 
+        "10Y-2Y Spread (bps)", 
+        height=450
+    )
+    
+    fig_nber_detailed.update_layout(
+        xaxis=dict(
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(count=5, label="5Y", step="year", stepmode="backward"),
+                    dict(count=10, label="10Y", step="year", stepmode="backward"),
+                    dict(step="all", label="ALL")
+                ])
+            ),
+            rangeslider=dict(visible=True)
+        )
+    )
+    
+    st.plotly_chart(fig_nber_detailed, use_container_width=True)
+    
+    # Inversion periods chart
+    fig_inv = plot_inversion_periods_chart(inversion_periods)
+    if fig_inv:
+        st.plotly_chart(fig_inv, use_container_width=True)
+    
+    # Lead time distribution chart
+    fig_lead = plot_lead_time_distribution(lead_times)
+    if fig_lead:
+        st.plotly_chart(fig_lead, use_container_width=True)
+    
+    # Detailed tables
+    render_recession_periods_table(recessions)
+    render_inversion_periods_table(inversion_periods)
+    render_lead_times_table(lead_times)
+    
+    # Summary statistics
+    st.markdown("#### 📊 Summary Statistics")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Recession Statistics**")
         st.markdown(f"""
-        - Total Inversion-to-Recession Events: {recession_stats['total_lead_times']}
-        - Average Lead Time: {recession_stats['avg_lead_time_days']:.0f} days ({recession_stats['avg_lead_time_months']:.1f} months)
-        - Median Lead Time: {recession_stats['median_lead_time_days']:.0f} days
-        - Minimum Lead Time: {recession_stats['min_lead_time_days']:.0f} days
-        - Maximum Lead Time: {recession_stats['max_lead_time_days']:.0f} days
+        - Total Recessions: {recession_stats['total_recessions']}
+        - Average Duration: {recession_stats['avg_recession_duration_days']:.0f} days ({recession_stats['avg_recession_duration_months']:.1f} months)
+        - Longest Recession: {recession_stats['longest_recession_days']:.0f} days
+        - Shortest Recession: {recession_stats['shortest_recession_days']:.0f} days
         """)
+    
+    with col2:
+        st.markdown("**Inversion Statistics**")
+        st.markdown(f"""
+        - Total Inversions: {recession_stats['total_inversions']}
+        - Average Inversion Duration: {recession_stats['avg_inversion_duration_days']:.0f} days
+        - Average Inversion Depth: {recession_stats['avg_inversion_depth_bps']:.1f} bps
+        - Max Inversion Depth: {recession_stats['max_inversion_depth_bps']:.1f} bps
+        """)
+    
+    st.markdown("**Lead Time Statistics**")
+    st.markdown(f"""
+    - Total Inversion-to-Recession Events: {recession_stats['total_lead_times']}
+    - Average Lead Time: {recession_stats['avg_lead_time_days']:.0f} days ({recession_stats['avg_lead_time_months']:.1f} months)
+    - Median Lead Time: {recession_stats['median_lead_time_days']:.0f} days
+    - Minimum Lead Time: {recession_stats['min_lead_time_days']:.0f} days
+    - Maximum Lead Time: {recession_stats['max_lead_time_days']:.0f} days
+    """)
     
     # ===== TAB 13: FORECASTING =====
     with tabs[12]:
