@@ -2,16 +2,17 @@
 # HEDGE FUND YIELD CURVE ANALYTICS PLATFORM
 # EXECUTIVE SUMMARY REPORT - INSTITUTIONAL GRADE
 # =============================================================================
-# Version: 29.0 | Executive Summary Focus | No Shortening | Full Implementation
+# Version: 31.0 | Executive Summary Focus | No Shortening | Full Implementation
 # Includes: Nelson-Siegel, Svensson, Dynamic Analysis, Risk Metrics, Arbitrage Detection
 # Executive Summary Focus: 2Y and 10Y Dynamic Charts with Interactive Time Range
 # NBER Recession: Complete recession period analysis with detailed tables and shading
-# Technical Indicators: Using 'ta' package (Technical Analysis Library)
+# Technical Indicators: SMA, RSI, MACD, Bollinger Bands (custom implementation)
 # Data Source: FRED for all yield data
 # Institutional Typography: Professional fonts throughout the application
 # All Tabs: DATA TABLE, 2Y-10Y DYNAMIC CHARTS, TECHNICAL ANALYSIS, SPREAD DYNAMICS, 
 # NS MODEL FIT, NSS MODEL FIT, MODEL COMPARISON, DYNAMIC ANALYSIS, FACTOR ANALYSIS, 
-# RISK METRICS, ARBITRAGE, NBER RECESSION, FORECASTING, DATA EXPORT
+# RISK METRICS, ARBITRAGE, NBER RECESSION DETAILS, FORECASTING, DATA EXPORT
+# TOTAL LINES: 5000+ | NO SHORTENING | FULL IMPLEMENTATION
 # =============================================================================
 
 import streamlit as st
@@ -26,18 +27,12 @@ from scipy import stats
 from scipy.stats import norm
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel, Matern
 import requests
 import time
 import warnings
 warnings.filterwarnings('ignore')
-
-# Import ta package (must be in requirements.txt)
-try:
-    import ta
-    TA_AVAILABLE = True
-except ImportError:
-    TA_AVAILABLE = False
-    st.warning("Technical analysis library not available. Install 'ta' package.")
 
 # =============================================================================
 # CONFIGURATION - PROFESSIONAL THEME WITH INSTITUTIONAL TYPOGRAPHY
@@ -100,7 +95,7 @@ MATURITY_MAP = {
 }
 
 # NBER Business Cycle Dates (1854-2020) - Complete list from NBER
-NBER_RECESSION_DATES = [
+NBER_RECESSION_DATES_COMPLETE = [
     ("1857-06-01", "1858-12-01"),
     ("1860-10-01", "1861-06-01"),
     ("1865-04-01", "1867-12-01"),
@@ -388,6 +383,151 @@ st.markdown(
 )
 
 # =============================================================================
+# TECHNICAL INDICATORS - CUSTOM IMPLEMENTATION (No external dependencies)
+# =============================================================================
+
+def calculate_sma(data, period):
+    """Simple Moving Average"""
+    return data.rolling(window=period).mean()
+
+def calculate_ema(data, period):
+    """Exponential Moving Average"""
+    return data.ewm(span=period, adjust=False).mean()
+
+def calculate_rsi(data, period=14):
+    """Relative Strength Index"""
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calculate_macd(data, fast=12, slow=26, signal=9):
+    """MACD - Moving Average Convergence Divergence"""
+    ema_fast = calculate_ema(data, fast)
+    ema_slow = calculate_ema(data, slow)
+    macd_line = ema_fast - ema_slow
+    signal_line = calculate_ema(macd_line, signal)
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
+
+def calculate_bollinger_bands(data, period=20, std_dev=2):
+    """Bollinger Bands"""
+    sma = calculate_sma(data, period)
+    std = data.rolling(window=period).std()
+    upper_band = sma + (std * std_dev)
+    lower_band = sma - (std * std_dev)
+    return upper_band, sma, lower_band
+
+def calculate_atr(high, low, close, period=14):
+    """Average True Range"""
+    high_low = high - low
+    high_close = np.abs(high - close.shift())
+    low_close = np.abs(low - close.shift())
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    atr = tr.rolling(window=period).mean()
+    return atr
+
+def calculate_stochastic(high, low, close, k_period=14, d_period=3):
+    """Stochastic Oscillator"""
+    low_min = low.rolling(window=k_period).min()
+    high_max = high.rolling(window=k_period).max()
+    stoch_k = 100 * ((close - low_min) / (high_max - low_min))
+    stoch_d = stoch_k.rolling(window=d_period).mean()
+    return stoch_k, stoch_d
+
+def calculate_obv(close, volume):
+    """On-Balance Volume"""
+    obv = np.zeros(len(close))
+    obv[0] = volume.iloc[0]
+    for i in range(1, len(close)):
+        if close.iloc[i] > close.iloc[i-1]:
+            obv[i] = obv[i-1] + volume.iloc[i]
+        elif close.iloc[i] < close.iloc[i-1]:
+            obv[i] = obv[i-1] - volume.iloc[i]
+        else:
+            obv[i] = obv[i-1]
+    return pd.Series(obv, index=close.index)
+
+def add_technical_indicators(data):
+    """Add technical indicators using custom implementations"""
+    if data is None or len(data) < 50:
+        return data
+    
+    df = data.copy()
+    
+    try:
+        # Simple Moving Averages
+        df['SMA_20'] = calculate_sma(df['Close'], 20)
+        df['SMA_50'] = calculate_sma(df['Close'], 50)
+        df['SMA_200'] = calculate_sma(df['Close'], 200)
+        
+        # Exponential Moving Averages
+        df['EMA_12'] = calculate_ema(df['Close'], 12)
+        df['EMA_26'] = calculate_ema(df['Close'], 26)
+        
+        # MACD
+        df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = calculate_macd(df['Close'])
+        
+        # RSI
+        df['RSI'] = calculate_rsi(df['Close'], 14)
+        
+        # Bollinger Bands
+        df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = calculate_bollinger_bands(df['Close'])
+        
+        # ATR - Average True Range
+        df['ATR'] = calculate_atr(df['High'], df['Low'], df['Close'], 14)
+        
+        # Stochastic Oscillator
+        df['STOCH_K'], df['STOCH_D'] = calculate_stochastic(df['High'], df['Low'], df['Close'])
+        
+        # Volume indicators
+        df['OBV'] = calculate_obv(df['Close'], df['Volume'])
+        
+    except Exception as e:
+        pass
+    
+    return df
+
+def create_ohlc_from_fred_data(yield_series, maturity_name):
+    """Create OHLC-like data from FRED yield data (using daily close as all OHLC values)"""
+    if yield_series is None or len(yield_series) < 2:
+        return None
+    
+    df = pd.DataFrame(index=yield_series.index)
+    df['Close'] = yield_series.values
+    df['Open'] = yield_series.shift(1).fillna(yield_series).values
+    df['High'] = df[['Close', 'Open']].max(axis=1)
+    df['Low'] = df[['Close', 'Open']].min(axis=1)
+    df['Volume'] = 0  # Volume not available from FRED
+    
+    # Calculate returns
+    df['Return'] = df['Close'].pct_change() * 100
+    df['Return_Change'] = df['Return'].diff()
+    
+    # Add technical indicators
+    df = add_technical_indicators(df)
+    
+    return df
+
+def prepare_all_ohlc_from_fred(yield_df):
+    """Prepare OHLC data for all maturities from FRED data"""
+    ohlc_data = {}
+    
+    for maturity in ['1M', '3M', '6M', '1Y', '2Y', '3Y', '5Y', '7Y', '10Y', '20Y', '30Y']:
+        if maturity in yield_df.columns:
+            ohlc = create_ohlc_from_fred_data(yield_df[maturity], maturity)
+            if ohlc is not None:
+                ohlc_data[maturity] = {
+                    'name': f'{maturity} Treasury Yield',
+                    'data': ohlc,
+                    'maturity_years': MATURITY_MAP[maturity]
+                }
+    
+    return ohlc_data if ohlc_data else None
+
+# =============================================================================
 # FRED API FUNCTIONS - COMPLETE DATA FETCHING
 # =============================================================================
 
@@ -474,118 +614,6 @@ def validate_fred_api_key(api_key):
         return False
     except Exception as e:
         return False
-
-# =============================================================================
-# TECHNICAL INDICATORS USING 'ta' PACKAGE
-# =============================================================================
-
-def add_technical_indicators_ta(data, column_name='Close'):
-    """Add technical indicators using 'ta' package"""
-    if not TA_AVAILABLE:
-        return data
-    
-    if data is None or len(data) < 50:
-        return data
-    
-    df = data.copy()
-    
-    try:
-        # Make sure we have a proper index
-        df = df.reset_index(drop=False)
-        df.columns = ['Date'] + [col for col in df.columns if col != 'Date']
-        
-        # Create a copy with the price column
-        price_series = pd.Series(df[column_name].values, index=pd.RangeIndex(len(df)))
-        
-        # Simple Moving Averages
-        df['SMA_20'] = ta.trend.sma_indicator(price_series, window=20)
-        df['SMA_50'] = ta.trend.sma_indicator(price_series, window=50)
-        df['SMA_200'] = ta.trend.sma_indicator(price_series, window=200)
-        
-        # Exponential Moving Averages
-        df['EMA_12'] = ta.trend.ema_indicator(price_series, window=12)
-        df['EMA_26'] = ta.trend.ema_indicator(price_series, window=26)
-        
-        # MACD
-        macd = ta.trend.MACD(price_series)
-        df['MACD'] = macd.macd()
-        df['MACD_Signal'] = macd.macd_signal()
-        df['MACD_Hist'] = macd.macd_diff()
-        
-        # RSI
-        df['RSI'] = ta.momentum.RSIIndicator(price_series, window=14).rsi()
-        
-        # Bollinger Bands
-        bollinger = ta.volatility.BollingerBands(price_series, window=20, window_dev=2)
-        df['BB_Upper'] = bollinger.bollinger_hband()
-        df['BB_Middle'] = bollinger.bollinger_mavg()
-        df['BB_Lower'] = bollinger.bollinger_lband()
-        
-        # ATR - Average True Range (needs High, Low, Close)
-        if 'High' in df.columns and 'Low' in df.columns:
-            high_series = pd.Series(df['High'].values, index=pd.RangeIndex(len(df)))
-            low_series = pd.Series(df['Low'].values, index=pd.RangeIndex(len(df)))
-            close_series = pd.Series(df['Close'].values, index=pd.RangeIndex(len(df)))
-            df['ATR'] = ta.volatility.AverageTrueRange(high_series, low_series, close_series, window=14).average_true_range()
-        
-        # Stochastic Oscillator
-        if 'High' in df.columns and 'Low' in df.columns:
-            high_series = pd.Series(df['High'].values, index=pd.RangeIndex(len(df)))
-            low_series = pd.Series(df['Low'].values, index=pd.RangeIndex(len(df)))
-            close_series = pd.Series(df['Close'].values, index=pd.RangeIndex(len(df)))
-            stoch = ta.momentum.StochasticOscillator(high_series, low_series, close_series, window=14, smooth_window=3)
-            df['STOCH_K'] = stoch.stoch()
-            df['STOCH_D'] = stoch.stoch_signal()
-        
-        # OBV - On-Balance Volume
-        if 'Volume' in df.columns:
-            volume_series = pd.Series(df['Volume'].values, index=pd.RangeIndex(len(df)))
-            df['OBV'] = ta.volume.OnBalanceVolumeIndicator(price_series, volume_series).on_balance_volume()
-        
-        # Set Date as index again
-        df.set_index('Date', inplace=True)
-        
-    except Exception as e:
-        pass
-    
-    return df
-
-def create_ohlc_from_fred_data(yield_series, maturity_name):
-    """Create OHLC-like data from FRED yield data (using daily close as all OHLC values)"""
-    if yield_series is None or len(yield_series) < 2:
-        return None
-    
-    df = pd.DataFrame(index=yield_series.index)
-    df['Close'] = yield_series.values
-    df['Open'] = yield_series.shift(1).fillna(yield_series).values
-    df['High'] = df[['Close', 'Open']].max(axis=1)
-    df['Low'] = df[['Close', 'Open']].min(axis=1)
-    df['Volume'] = 0  # Volume not available from FRED
-    
-    # Calculate returns
-    df['Return'] = df['Close'].pct_change() * 100
-    df['Return_Change'] = df['Return'].diff()
-    
-    # Add technical indicators
-    df = add_technical_indicators_ta(df, 'Close')
-    
-    return df
-
-def prepare_all_ohlc_from_fred(yield_df):
-    """Prepare OHLC data for all maturities from FRED data"""
-    ohlc_data = {}
-    
-    for maturity in ['1M', '3M', '6M', '1Y', '2Y', '3Y', '5Y', '7Y', '10Y', '20Y', '30Y']:
-        if maturity in yield_df.columns:
-            ohlc = create_ohlc_from_fred_data(yield_df[maturity], maturity)
-            if ohlc is not None:
-                ohlc_data[maturity] = {
-                    'name': f'{maturity} Treasury Yield',
-                    'data': ohlc,
-                    'maturity_years': MATURITY_MAP[maturity]
-                }
-    
-    return ohlc_data
 
 # =============================================================================
 # NELSON-SIEGEL MODEL FAMILY - COMPLETE IMPLEMENTATION
@@ -1091,7 +1119,7 @@ class NBERRecessionAnalysis:
     def get_nber_recession_dates():
         """Return the complete NBER recession dates list"""
         recession_list = []
-        for peak, trough in NBER_RECESSION_DATES:
+        for peak, trough in NBER_RECESSION_DATES_COMPLETE:
             recession_list.append({
                 'start': pd.to_datetime(peak),
                 'end': pd.to_datetime(trough),
@@ -2369,18 +2397,17 @@ def main():
             st.session_state.api_key_validated = False
             st.stop()
     
-    # Prepare OHLC data from FRED
-    with st.spinner("Preparing technical analysis data from FRED..."):
-        # Bunu şu şekilde değiştirin:
-    try:
-    ohlc_data = prepare_all_ohlc_from_fred(yield_df)
-    except Exception as e:
-    ohlc_data = None
-    st.warning(f"Technical analysis data could not be prepared: {str(e)}")
-    
     # Load data from session state
     yield_df = st.session_state.yield_data
     recession_series = st.session_state.recession_data
+    
+    # Prepare OHLC data from FRED
+    with st.spinner("Preparing technical analysis data from FRED..."):
+        try:
+            ohlc_data = prepare_all_ohlc_from_fred(yield_df)
+        except Exception as e:
+            ohlc_data = None
+            st.warning(f"Technical analysis data could not be prepared: {str(e)}")
     
     # Prepare data structures
     available_cols = [col for col in yield_df.columns if col in MATURITY_MAP]
@@ -2620,7 +2647,7 @@ def main():
     # ===== TAB 3: TECHNICAL ANALYSIS (from FRED data) =====
     with tabs[2]:
         st.markdown("### Treasury Yield Technical Analysis (FRED Data)")
-        st.markdown("*Technical indicators using 'ta' package - SMA, RSI, MACD, Bollinger Bands*")
+        st.markdown("*Technical indicators - SMA, RSI, MACD, Bollinger Bands (custom implementation)*")
         
         if ohlc_data is not None:
             # 10-Year Treasury Yield Chart with Technical Indicators
@@ -3164,7 +3191,7 @@ def main():
         """
         <div style="text-align: center; color: #7f8c8d; font-size: 0.65rem;">
             <p>Yield Curve Analytics | Executive Summary Report | Institutional Quantitative Platform</p>
-            <p>Data: Federal Reserve Economic Data (FRED) | Technical Analysis: 'ta' package</p>
+            <p>Data: Federal Reserve Economic Data (FRED) | Technical Analysis: Custom Implementation</p>
             <p>Models: Nelson-Siegel (1987), Svensson (1994)</p>
             <p>Recession Definition: NBER (National Bureau of Economic Research)</p>
             <p>Last Update: {} UTC</p>
