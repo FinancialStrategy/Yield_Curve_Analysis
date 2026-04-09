@@ -2,7 +2,7 @@ import time
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -17,15 +17,6 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore")
-
-# =============================================================================
-# V34 INSTITUTIONAL ARCHITECTURE REFACTOR
-# - lighter institutional background
-# - executive view separated from research view
-# - restrained palette and consistent charts
-# - lazy compute sections and stronger cache discipline
-# - preserves full app scope from prior versions
-# =============================================================================
 
 st.set_page_config(
     page_title="Yield Curve Analytics | Institutional v34",
@@ -162,10 +153,6 @@ class RuntimeConfig:
 CFG = RuntimeConfig()
 
 
-# =============================================================================
-# DATA LAYER
-# =============================================================================
-
 def fred_request(api_key: str, series_id: str) -> Optional[pd.Series]:
     url = "https://api.stlouisfed.org/fred/series/observations"
     params = {
@@ -222,10 +209,6 @@ def fetch_all_yield_data(api_key: str) -> Optional[pd.DataFrame]:
 def fetch_recession_data(api_key: str) -> Optional[pd.Series]:
     return fred_request(api_key, "USREC")
 
-
-# =============================================================================
-# ANALYTICS LAYER
-# =============================================================================
 
 def compute_spreads(yield_df: pd.DataFrame) -> pd.DataFrame:
     spreads = pd.DataFrame(index=yield_df.index)
@@ -525,10 +508,6 @@ def arbitrage_diagnostics(yield_df: pd.DataFrame, maturities: np.ndarray) -> Opt
     }
 
 
-# =============================================================================
-# VISUAL LAYER
-# =============================================================================
-
 def add_recession_bands(fig: go.Figure, recessions: List[dict]) -> go.Figure:
     for rec in recessions:
         fig.add_vrect(
@@ -594,10 +573,6 @@ def chart_current_curve(maturities: np.ndarray, yields_: np.ndarray, ns_result: 
     return create_chart_layout(fig, "Current Treasury Curve and Model Fits", "Yield (%)", 440)
 
 
-# =============================================================================
-# UI HELPERS
-# =============================================================================
-
 def render_api_gate() -> None:
     st.markdown(
         f"""
@@ -635,10 +610,6 @@ def kpi_card(label: str, value: str, sub: str) -> None:
         unsafe_allow_html=True,
     )
 
-
-# =============================================================================
-# MAIN APP
-# =============================================================================
 
 def main() -> None:
     st.markdown(
@@ -698,7 +669,6 @@ def main() -> None:
     current_30y = yield_df["30Y"].iloc[-1] if "30Y" in yield_df.columns else np.nan
     current_spread = spreads["10Y-2Y"].iloc[-1] if "10Y-2Y" in spreads.columns else np.nan
 
-    # compute once
     ns_result = NelsonSiegelModel.fit_ns(maturities, latest_curve)
     nss_result = NelsonSiegelModel.fit_nss(maturities, latest_curve)
     dynamic_params = rolling_ns_parameters(yield_df[selected_cols], maturities, selected_cols, rolling_years)
