@@ -3,202 +3,179 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import yfinance as yf
+import requests
 from datetime import datetime, timedelta, date
 import warnings
 warnings.filterwarnings('ignore')
 
 # =============================================================================
-# CORRECTED TREASURY SYMBOLS
+# FRED API KONFIGÜRASYONU
 # =============================================================================
 
-# Valid yfinance symbols for Treasury yields
-TREASURY_SYMBOLS = {
-    '3M': '^IRX',   # 13-week Treasury Bill (works)
-    '2Y': '^IRX',   # Using 3M as proxy (most reliable) - OR use '^FVX' for 5Y as proxy
-    '5Y': '^FVX',   # 5-year Treasury Note (works)
-    '10Y': '^TNX',  # 10-year Treasury Note (works)
-    '30Y': '^TYX'   # 30-year Treasury Bond (works)
-}
-
-# Alternative: Use FRED data via yfinance (more reliable)
-FRED_TREASURY_SYMBOLS = {
+# FRED API Series IDs for Treasury yields
+FRED_SERIES = {
     '3M': 'DGS3MO',     # 3-Month Treasury Bill
-    '2Y': 'DGS2',       # 2-Year Treasury Note
+    '2Y': 'DGS2',       # 2-Year Treasury Note  
     '5Y': 'DGS5',       # 5-Year Treasury Note
     '10Y': 'DGS10',     # 10-Year Treasury Note
     '30Y': 'DGS30'      # 30-Year Treasury Bond
 }
 
+# Recession indicator
+RECESSION_SERIES = 'USREC'
+
 # Bond ETFs for backtesting
 BOND_ETFS = {
     'TLT': '20+ Year Treasury Bond ETF',
-    'IEF': '7-10 Year Treasury Bond ETF',
+    'IEF': '7-10 Year Treasury Bond ETF', 
     'SHY': '1-3 Year Treasury Bond ETF',
     'BND': 'Total Bond Market ETF',
     'GOVT': 'US Treasury Bond ETF'
 }
 
 # =============================================================================
-# IMPROVED DATA FETCHING FUNCTIONS
+# FRED API FONKSİYONLARI
 # =============================================================================
 
-def fetch_yield_data_fred(start_date=None, end_date=None):
-    """
-    Fetch yield curve data using FRED symbols via yfinance
-    This is more reliable than market tickers
-    """
-    if start_date is None:
-        start_date = datetime.now() - timedelta(days=365*2)
-    if end_date is None:
-        end_date = datetime.now()
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_fred_series(api_key, series_id, start_date, end_date):
+    """Fetch data from FRED API"""
+    url = "https://api.stlouisfed.org/fred/series/observations"
+    params = {
+        'series_id': series_id,
+        'api_key': api_key,
+        'file_type': 'json',
+        'observation_start': start_date.strftime('%Y-%m-%d'),
+        'observation_end': end_date.strftime('%Y-%m-%d'),
+        'sort_order': 'asc'
+    }
     
-    yields_data = {}
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        
+        observations = data.get('observations', [])
+        if not observations:
+            return pd.Series(dtype='float64')
+        
+        dates = []
+        values = []
+        for obs in observations:
+            value = obs.get('value')
+            if value != '.' and value is not None:
+                dates.append(pd.to_datetime(obs['date']))
+                values.append(float(value))
+        
+        if dates:
+            return pd.Series(values, index=dates, name=series_id)
+        return pd.Series(dtype='float64')
     
-    for maturity, symbol in FRED_TREASURY_SYMBOLS.items():
-        try:
-            # Add FRED prefix for yfinance
-            fred_symbol = f"{symbol}=X"
-            data = yf.download(fred_symbol, start=start_date, end=end_date, progress=False)
-            
-            if not data.empty and 'Adj Close' in data.columns:
-                yields_data[maturity] = data['Adj Close']
-            else:
-                # Fallback to regular symbol without =X
-                data = yf.download(symbol, start=start_date, end=end_date, progress=False)
-                if not data.empty and 'Adj Close' in data.columns:
-                    yields_data[maturity] = data['Adj Close']
-                else:
-                    print(f"Could not fetch data for {maturity}")
-                    yields_data[maturity] = pd.Series(dtype='float64')
-        except Exception as e:
-            print(f"Error fetching {maturity}: {e}")
-            yields_data[maturity] = pd.Series(dtype='float64')
+    except Exception as e:
+        st.warning(f"Error fetching {series_id}: {str(e)}")
+        return pd.Series(dtype='float64')
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_all_yield_data(api_key, start_date, end_date):
+    """Fetch all yield curve data from FRED"""
+    data = {}
     
-    df = pd.DataFrame(yields_data)
+    for name, series_id in FRED_SERIES.items():
+        series_data = fetch_fred_series(api_key, series_id, start_date, end_date)
+        if not series_data.empty:
+            data[name] = series_data
+        else:
+            st.warning(f"Could not fetch {name} data (Series: {series_id})")
     
-    # Fill missing values
-    if not df.empty:
-        df = df.fillna(method='ffill').fillna(method='bfill')
+    if not data:
+        return pd.DataFrame()
+    
+    df = pd.DataFrame(data)
+    
+    # Forward fill missing values
+    df = df.fillna(method='ffill').fillna(method='bfill')
     
     return df
 
-def fetch_yield_data_alternative(start_date=None, end_date=None):
-    """
-    Alternative method using market tickers with proxy for 2Y
-    """
-    if start_date is None:
-        start_date = datetime.now() - timedelta(days=365*2)
-    if end_date is None:
-        end_date = datetime.now()
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_recession_data(api_key, start_date, end_date):
+    """Fetch recession indicator data"""
+    series = fetch_fred_series(api_key, RECESSION_SERIES, start_date, end_date)
+    return series
+
+def validate_fred_api_key(api_key):
+    """Validate FRED API key"""
+    if not api_key or len(api_key) < 10:
+        return False
     
-    yields_data = {}
+    test_url = "https://api.stlouisfed.org/fred/series/observations"
+    params = {
+        'series_id': 'DGS10',
+        'api_key': api_key,
+        'file_type': 'json',
+        'limit': 1
+    }
     
-    # Use available tickers
-    available_symbols = {
+    try:
+        response = requests.get(test_url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return 'observations' in data
+    except:
+        return False
+
+# =============================================================================
+# ALTERNATİF YFINANCE FONKSİYONLARI (FALLBACK)
+# =============================================================================
+
+def fetch_yfinance_alternative(start_date, end_date):
+    """Fallback to yfinance if FRED fails"""
+    import yfinance as yf
+    
+    # Available yfinance tickers
+    tickers = {
         '3M': '^IRX',
-        '5Y': '^FVX',
+        '5Y': '^FVX', 
         '10Y': '^TNX',
         '30Y': '^TYX'
     }
     
-    for maturity, symbol in available_symbols.items():
+    data = {}
+    
+    for name, ticker in tickers.items():
         try:
-            data = yf.download(symbol, start=start_date, end=end_date, progress=False)
-            if not data.empty and 'Adj Close' in data.columns:
-                yields_data[maturity] = data['Adj Close']
-            else:
-                yields_data[maturity] = pd.Series(dtype='float64')
+            df = yf.download(ticker, start=start_date, end=end_date, progress=False)
+            if not df.empty and 'Adj Close' in df.columns:
+                series = df['Adj Close']
+                series.index = series.index.tz_localize(None)
+                data[name] = series
+                
+                # Convert IRX from discount rate to yield
+                if name == '3M':
+                    data[name] = (100 - data[name]) * 4
         except Exception as e:
-            print(f"Error fetching {maturity}: {e}")
-            yields_data[maturity] = pd.Series(dtype='float64')
+            st.warning(f"Could not fetch {name} from yfinance: {e}")
     
     # Create synthetic 2Y yield (interpolation between 3M and 5Y)
-    if '3M' in yields_data and '5Y' in yields_data:
-        if not yields_data['3M'].empty and not yields_data['5Y'].empty:
-            # Simple interpolation: 2Y = (3M + 5Y) / 2
-            yields_data['2Y'] = (yields_data['3M'] + yields_data['5Y']) / 2
-        else:
-            yields_data['2Y'] = pd.Series(dtype='float64')
+    if '3M' in data and '5Y' in data and not data['3M'].empty and not data['5Y'].empty:
+        data['2Y'] = (data['3M'] + data['5Y']) / 2
     else:
-        yields_data['2Y'] = pd.Series(dtype='float64')
+        data['2Y'] = pd.Series(dtype='float64')
     
-    df = pd.DataFrame(yields_data)
+    if not data:
+        return pd.DataFrame()
     
-    if not df.empty:
-        df = df.fillna(method='ffill').fillna(method='bfill')
+    df = pd.DataFrame(data)
+    df = df.fillna(method='ffill').fillna(method='bfill')
     
     return df
 
-def fetch_yield_data_combined(start_date=None, end_date=None):
-    """
-    Combined approach: Try FRED first, fallback to market data
-    """
-    # First try FRED data
-    df_fred = fetch_yield_data_fred(start_date, end_date)
-    
-    if not df_fred.empty and len(df_fred) > 10:
-        return df_fred
-    
-    # Fallback to alternative market data
-    df_market = fetch_yield_data_alternative(start_date, end_date)
-    
-    if not df_market.empty:
-        return df_market
-    
-    # If all fails, return empty dataframe
-    return pd.DataFrame()
-
-def fetch_etf_data(etf_symbol, start_date, end_date):
-    """Fetch ETF price data for backtesting"""
-    try:
-        data = yf.download(etf_symbol, start=start_date, end=end_date, progress=False)
-        if not data.empty and 'Adj Close' in data.columns:
-            return data['Adj Close']
-    except Exception as e:
-        print(f"Error fetching {etf_symbol}: {e}")
-    return pd.Series(dtype='float64')
-
-def fetch_vix_data(start_date, end_date):
-    """Fetch VIX data for volatility analysis"""
-    try:
-        data = yf.download('^VIX', start=start_date, end=end_date, progress=False)
-        if not data.empty and 'Adj Close' in data.columns:
-            return data['Adj Close']
-    except Exception as e:
-        print(f"Error fetching VIX: {e}")
-    return pd.Series(dtype='float64')
-
-def fetch_economic_indicators(start_date, end_date):
-    """Fetch additional economic indicators"""
-    indicators = {}
-    
-    # Try to fetch various indicators
-    symbols = {
-        'SPY': 'S&P 500',
-        'QQQ': 'Nasdaq',
-        'GLD': 'Gold',
-        'UUP': 'Dollar Index'
-    }
-    
-    for symbol, name in symbols.items():
-        try:
-            data = yf.download(symbol, start=start_date, end=end_date, progress=False)
-            if not data.empty and 'Adj Close' in data.columns:
-                indicators[name] = data['Adj Close']
-        except Exception as e:
-            print(f"Error fetching {symbol}: {e}")
-    
-    return pd.DataFrame(indicators) if indicators else pd.DataFrame()
-
 # =============================================================================
-# YIELD CURVE ANALYSIS FUNCTIONS
+# YIELD CURVE ANALİZ FONKSİYONLARI
 # =============================================================================
 
 def plot_yield_curve(df, selected_date):
-    """
-    Create interactive yield curve plot
-    """
+    """Create interactive yield curve plot"""
     if df.empty:
         return None
     
@@ -208,7 +185,6 @@ def plot_yield_curve(df, selected_date):
     if pd.isnull(closest_date):
         return None
     
-    # Define maturities in years
     maturities = {'3M': 0.25, '2Y': 2, '5Y': 5, '10Y': 10, '30Y': 30}
     
     fig = go.Figure()
@@ -233,7 +209,7 @@ def plot_yield_curve(df, selected_date):
             marker=dict(size=10)
         ))
     
-    # Add historical comparison (1 year ago)
+    # Historical comparison (1 year ago)
     year_ago = closest_date - pd.DateOffset(years=1)
     year_ago = available_dates[available_dates <= year_ago].max()
     
@@ -270,9 +246,7 @@ def plot_yield_curve(df, selected_date):
     return fig
 
 def calculate_spreads(df):
-    """
-    Calculate various yield spreads
-    """
+    """Calculate various yield spreads"""
     spreads = pd.DataFrame(index=df.index)
     
     if '2Y' in df.columns and '10Y' in df.columns:
@@ -284,21 +258,16 @@ def calculate_spreads(df):
     if '5Y' in df.columns and '30Y' in df.columns:
         spreads['5s30s'] = df['30Y'] - df['5Y']
     
-    if '2Y' in df.columns and '5Y' in df.columns:
-        spreads['2s5s'] = df['5Y'] - df['2Y']
-    
     return spreads
 
 def plot_spreads(spreads):
-    """
-    Create spread visualization
-    """
+    """Create spread visualization"""
     if spreads.empty:
         return None
     
     fig = go.Figure()
     
-    colors = {'2s10s': '#2c5f8a', '3m10y': '#c17f3a', '5s30s': '#4a7c59', '2s5s': '#8b5cf6'}
+    colors = {'2s10s': '#2c5f8a', '3m10y': '#c17f3a', '5s30s': '#4a7c59'}
     
     for col in spreads.columns:
         if not spreads[col].isna().all():
@@ -308,7 +277,7 @@ def plot_spreads(spreads):
                 name=col.upper(),
                 line=dict(color=colors.get(col, '#666'), width=2),
                 fill='tozeroy',
-                fillcolor=f'rgba(44, 95, 138, 0.1)'
+                fillcolor='rgba(44, 95, 138, 0.1)'
             ))
     
     fig.add_hline(y=0, line_color='red', line_dash='dash', line_width=1.5)
@@ -326,36 +295,31 @@ def plot_spreads(spreads):
     return fig
 
 def calculate_forward_rates(df):
-    """
-    Calculate implied forward rates
-    """
+    """Calculate implied forward rates"""
     forwards = pd.DataFrame(index=df.index)
     maturities = {'3M': 0.25, '2Y': 2, '5Y': 5, '10Y': 10, '30Y': 30}
     
     pairs = []
-    if '3M' in df.columns and '2Y' in df.columns:
-        pairs.append(('3M', '2Y'))
-    if '2Y' in df.columns and '5Y' in df.columns:
-        pairs.append(('2Y', '5Y'))
-    if '5Y' in df.columns and '10Y' in df.columns:
-        pairs.append(('5Y', '10Y'))
-    if '10Y' in df.columns and '30Y' in df.columns:
-        pairs.append(('10Y', '30Y'))
+    available_maturities = [m for m in maturities.keys() if m in df.columns]
+    
+    for i in range(len(available_maturities) - 1):
+        pairs.append((available_maturities[i], available_maturities[i + 1]))
     
     for short_term, long_term in pairs:
-        r1 = maturities[short_term]
-        r2 = maturities[long_term]
-        
-        try:
-            forward_rate = (((1 + df[long_term] / 100) ** r2 / (1 + df[short_term] / 100) ** r1) ** (1 / (r2 - r1)) - 1) * 100
-            forwards[f'{short_term}→{long_term}'] = forward_rate
-        except Exception as e:
-            print(f"Could not calculate forward rate for {short_term}-{long_term}: {e}")
+        if short_term in df.columns and long_term in df.columns:
+            r1 = maturities[short_term]
+            r2 = maturities[long_term]
+            
+            try:
+                forward_rate = (((1 + df[long_term] / 100) ** r2 / (1 + df[short_term] / 100) ** r1) ** (1 / (r2 - r1)) - 1) * 100
+                forwards[f'{short_term}→{long_term}'] = forward_rate
+            except:
+                pass
     
     return forwards
 
 # =============================================================================
-# TRADING STRATEGY FUNCTIONS
+# TRADING STRATEJİSİ
 # =============================================================================
 
 class YieldCurveTradingStrategy:
@@ -367,32 +331,24 @@ class YieldCurveTradingStrategy:
         self.signals = None
         self.results = None
     
-    def generate_signals(self, strategy_type='composite'):
-        """Generate trading signals based on yield curve"""
-        
+    def generate_signals(self):
+        """Generate trading signals"""
         signals = pd.DataFrame(index=self.spreads.index)
         
-        # Strategy 1: Classic 2s10s inversion
+        # Classic 2s10s inversion
         signals['Classic'] = 0
         if '2s10s' in self.spreads.columns:
             signals.loc[self.spreads['2s10s'] < 0, 'Classic'] = 1
             signals.loc[self.spreads['2s10s'] > 0.5, 'Classic'] = -1
         
-        # Strategy 2: 3m10y signal
+        # 3m10y signal
         signals['3m10y'] = 0
         if '3m10y' in self.spreads.columns:
             signals.loc[self.spreads['3m10y'] < 0, '3m10y'] = 1
             signals.loc[self.spreads['3m10y'] > 0.5, '3m10y'] = -1
         
-        # Strategy 3: Momentum-enhanced
-        signals['Momentum'] = 0
-        if '2s10s' in self.spreads.columns:
-            spread_change = self.spreads['2s10s'].diff(20)
-            signals.loc[(self.spreads['2s10s'] < 0) & (spread_change < 0), 'Momentum'] = 1
-            signals.loc[(self.spreads['2s10s'] > 0) & (spread_change > 0), 'Momentum'] = -1
-        
-        # Strategy 4: Composite
-        signals['Composite'] = (signals['Classic'] + signals['3m10y'] + signals['Momentum']) / 3
+        # Composite
+        signals['Composite'] = (signals['Classic'] + signals['3m10y']) / 2
         signals['Composite'] = signals['Composite'].clip(-1, 1)
         
         self.signals = signals
@@ -400,12 +356,25 @@ class YieldCurveTradingStrategy:
     
     def backtest(self, etf_prices, signal_col='Composite', transaction_cost=0.001):
         """Backtest the strategy"""
+        import yfinance as yf
         
         if self.signals is None:
             self.generate_signals()
         
         if signal_col not in self.signals.columns:
             return None
+        
+        # Fetch ETF data if not provided
+        if etf_prices is None or etf_prices.empty:
+            try:
+                etf_data = yf.download('TLT', start=self.yields.index[0], end=self.yields.index[-1], progress=False)
+                if not etf_data.empty and 'Adj Close' in etf_data.columns:
+                    etf_prices = etf_data['Adj Close']
+                    etf_prices.index = etf_prices.index.tz_localize(None)
+                else:
+                    return None
+            except:
+                return None
         
         signals = self.signals[signal_col].copy()
         
@@ -453,20 +422,25 @@ class YieldCurveTradingStrategy:
         strategy_clean = strategy_returns[strategy_returns != 0]
         
         if len(strategy_clean) == 0:
-            return self.get_empty_metrics(cum_benchmark)
+            return {
+                'Total Return Strategy': 0,
+                'Total Return Benchmark': float(cum_benchmark.iloc[-1] - 1) if len(cum_benchmark) > 0 else 0,
+                'Excess Return': 0,
+                'Sharpe Ratio': 0,
+                'Max Drawdown': 0,
+                'Win Rate': 0,
+                'Profit Factor': 0
+            }
         
         ann_factor = np.sqrt(252)
         
         metrics = {
-            'Total Return Strategy': float(cum_strategy.iloc[-1] - 1) if len(cum_strategy) > 0 else 0,
-            'Total Return Benchmark': float(cum_benchmark.iloc[-1] - 1) if len(cum_benchmark) > 0 else 0,
+            'Total Return Strategy': float(cum_strategy.iloc[-1] - 1),
+            'Total Return Benchmark': float(cum_benchmark.iloc[-1] - 1),
             'Sharpe Ratio': (strategy_returns.mean() / strategy_returns.std()) * ann_factor if strategy_returns.std() > 0 else 0,
-            'Benchmark Sharpe': (benchmark_returns.mean() / benchmark_returns.std()) * ann_factor if benchmark_returns.std() > 0 else 0,
             'Max Drawdown': self.calculate_max_drawdown(cum_strategy),
-            'Benchmark Drawdown': self.calculate_max_drawdown(cum_benchmark),
-            'Win Rate': float((strategy_returns > 0).sum() / len(strategy_returns[strategy_returns != 0])) if len(strategy_returns[strategy_returns != 0]) > 0 else 0,
-            'Profit Factor': 0,
-            'Calmar Ratio': 0
+            'Win Rate': float((strategy_returns > 0).sum() / len(strategy_returns[strategy_returns != 0])),
+            'Profit Factor': 0
         }
         
         metrics['Excess Return'] = metrics['Total Return Strategy'] - metrics['Total Return Benchmark']
@@ -475,43 +449,19 @@ class YieldCurveTradingStrategy:
         gross_losses = abs(strategy_returns[strategy_returns < 0].sum())
         metrics['Profit Factor'] = float(gross_profits / gross_losses) if gross_losses > 0 else 0
         
-        if metrics['Max Drawdown'] != 0 and len(cum_strategy) > 0:
-            years = len(cum_strategy) / 252
-            if years > 0 and cum_strategy.iloc[-1] > 0:
-                annual_return = (cum_strategy.iloc[-1] ** (1/years) - 1)
-                metrics['Calmar Ratio'] = float(annual_return / abs(metrics['Max Drawdown']))
-        
         return metrics
     
     @staticmethod
     def calculate_max_drawdown(cumulative_returns):
-        """Calculate maximum drawdown"""
         if len(cumulative_returns) == 0:
             return 0
-        
         cum_clean = cumulative_returns.fillna(1)
         rolling_max = cum_clean.expanding().max()
         drawdown = (cum_clean - rolling_max) / rolling_max
         return float(drawdown.min())
-    
-    @staticmethod
-    def get_empty_metrics(cum_benchmark):
-        """Return empty metrics when no data available"""
-        return {
-            'Total Return Strategy': 0,
-            'Total Return Benchmark': float(cum_benchmark.iloc[-1] - 1) if len(cum_benchmark) > 0 else 0,
-            'Excess Return': 0,
-            'Sharpe Ratio': 0,
-            'Benchmark Sharpe': 0,
-            'Max Drawdown': 0,
-            'Benchmark Drawdown': 0,
-            'Win Rate': 0,
-            'Profit Factor': 0,
-            'Calmar Ratio': 0
-        }
 
 def get_recession_probability(spreads_df):
-    """Calculate recession probability based on yield curve"""
+    """Calculate recession probability"""
     if '2s10s' not in spreads_df.columns or spreads_df.empty:
         return 0.5
     
@@ -519,7 +469,6 @@ def get_recession_probability(spreads_df):
     if pd.isna(current_spread):
         return 0.5
     
-    # Logistic function based on historical relationship
     prob = 1 / (1 + np.exp(-(-current_spread * 2 - 0.5)))
     return min(max(prob, 0.01), 0.99)
 
@@ -533,98 +482,143 @@ st.set_page_config(
     layout="wide"
 )
 
+# Session state initialization
+if 'api_key_validated' not in st.session_state:
+    st.session_state.api_key_validated = False
+if 'yield_data' not in st.session_state:
+    st.session_state.yield_data = None
+
 # Title
 st.title("📈 Bond Yield Curve Analysis Platform")
-st.markdown("*Institutional-Grade Fixed Income Analytics*")
+st.markdown("*Institutional-Grade Fixed Income Analytics with FRED Data*")
+
+# API Key Management
+if not st.session_state.api_key_validated:
+    st.markdown("""
+    ### 🔑 FRED API Key Required
+    
+    This platform uses FRED (Federal Reserve Economic Data) for accurate Treasury yield data.
+    
+    **Get your free API key:**
+    1. Go to [FRED API website](https://fred.stlouisfed.org/docs/api/api_key.html)
+    2. Register for a free account
+    3. Request an API key (instant, free)
+    4. Enter your key below
+    """)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        api_key = st.text_input("Enter your FRED API Key", type="password", placeholder="abcdefghijklmnopqrstuvwxyz123456")
+        
+        if st.button("🔐 Validate & Connect", use_container_width=True):
+            if not api_key:
+                st.error("Please enter an API key")
+            else:
+                with st.spinner("Validating API key..."):
+                    if validate_fred_api_key(api_key):
+                        st.session_state.api_key = api_key
+                        st.session_state.api_key_validated = True
+                        st.success("✅ API key validated successfully!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid API key. Please check and try again.")
+    
+    st.stop()
 
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    # Date range selection
+    # Date range
     default_end = datetime.now()
     default_start = default_end - timedelta(days=365*2)
     
     start_date = st.date_input("Start Date", default_start, max_value=default_end)
     end_date = st.date_input("End Date", default_end, max_value=default_end)
     
-    data_source = st.selectbox("Data Source", ["FRED (Recommended)", "Market Data (Alternative)"])
+    data_source = st.radio("Data Source", ["FRED API (Recommended)", "Yahoo Finance (Fallback)"])
     
     st.markdown("---")
     st.header("📊 Strategy Parameters")
     
-    selected_etf = st.selectbox("Select ETF for Backtest", list(BOND_ETFS.keys()))
-    selected_strategy = st.selectbox("Trading Strategy", 
-                                     ['Composite', 'Classic', '3m10y', 'Momentum'])
+    selected_etf = st.selectbox("ETF for Backtest", list(BOND_ETFS.keys()))
+    selected_strategy = st.selectbox("Trading Strategy", ['Composite', 'Classic', '3m10y'])
     transaction_cost = st.slider("Transaction Cost (%)", 0.0, 0.5, 0.1, 0.01) / 100
     
     run_analysis = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
 
 # Main content
 if run_analysis:
-    with st.spinner("Fetching market data..."):
-        # Fetch data based on selected source
-        if data_source == "FRED (Recommended)":
-            df = fetch_yield_data_combined(start_date, end_date)
+    with st.spinner("Fetching yield curve data from FRED..."):
+        
+        # Fetch data based on source
+        if data_source == "FRED API (Recommended)":
+            df = fetch_all_yield_data(st.session_state.api_key, start_date, end_date)
         else:
-            df = fetch_yield_data_alternative(start_date, end_date)
+            df = fetch_yfinance_alternative(start_date, end_date)
         
         if df.empty:
             st.error("""
-            Failed to fetch yield data. Possible solutions:
-            1. Try selecting "Market Data (Alternative)" in the sidebar
+            ❌ **Failed to fetch yield data**
+            
+            Possible solutions:
+            1. Try switching to "Yahoo Finance (Fallback)" in the sidebar
             2. Reduce the date range
             3. Check your internet connection
-            4. The data source might be temporarily unavailable
+            4. Your FRED API key might be invalid - please re-enter it
             """)
+            
+            # Reset API key option
+            if st.button("Reset API Key"):
+                st.session_state.api_key_validated = False
+                st.rerun()
             st.stop()
         
-        # Display data info
-        st.info(f"✅ Data loaded successfully. Available maturities: {', '.join(df.columns)}")
+        # Fetch recession data
+        recession_data = fetch_recession_data(st.session_state.api_key, start_date, end_date)
         
-        # Calculate spreads and forwards
+        # Calculate metrics
         spreads = calculate_spreads(df)
         forwards = calculate_forward_rates(df)
-        
-        # Fetch ETF data for backtest
-        etf_prices = fetch_etf_data(selected_etf, start_date, end_date)
-        
-        # Fetch VIX data
-        vix_data = fetch_vix_data(start_date, end_date)
-        
-        # Run trading strategy
-        strategy = YieldCurveTradingStrategy(df, spreads)
-        strategy.generate_signals()
-        backtest_results = strategy.backtest(etf_prices, selected_strategy, transaction_cost)
-        
-        # Calculate recession probability
         recession_prob = get_recession_probability(spreads)
         
-        # Display KPIs
-        st.subheader("📊 Market Overview")
+        # Display success
+        st.success(f"✅ Data loaded successfully! Period: {start_date} to {end_date}")
+        st.info(f"📊 Available maturities: {', '.join(df.columns)}")
+        
+        # KPI Row
+        st.subheader("📊 Current Market Overview")
         
         col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
-            current_10y = df['10Y'].iloc[-1] if '10Y' in df.columns and not df.empty else np.nan
+            current_10y = df['10Y'].iloc[-1] if '10Y' in df.columns else np.nan
             st.metric("10Y Yield", f"{current_10y:.2f}%" if not np.isnan(current_10y) else "N/A")
         
         with col2:
-            current_2y = df['2Y'].iloc[-1] if '2Y' in df.columns and not df.empty else np.nan
+            current_2y = df['2Y'].iloc[-1] if '2Y' in df.columns else np.nan
             st.metric("2Y Yield", f"{current_2y:.2f}%" if not np.isnan(current_2y) else "N/A")
         
         with col3:
-            current_spread = spreads['2s10s'].iloc[-1] if '2s10s' in spreads.columns and not spreads.empty else np.nan
-            st.metric("2s10s Spread", f"{current_spread:.2f}%" if not np.isnan(current_spread) else "N/A")
+            current_spread = spreads['2s10s'].iloc[-1] if '2s10s' in spreads.columns else np.nan
+            delta_color = "inverse" if current_spread < 0 else "normal"
+            st.metric("2s10s Spread", f"{current_spread:.2f}%" if not np.isnan(current_spread) else "N/A",
+                     delta="Inverted" if current_spread < 0 else "Normal",
+                     delta_color=delta_color)
         
         with col4:
             st.metric("Recession Probability", f"{recession_prob:.1%}")
         
         with col5:
-            current_vix = vix_data.iloc[-1] if not vix_data.empty else np.nan
-            st.metric("VIX", f"{current_vix:.2f}" if not np.isnan(current_vix) else "N/A")
+            st.metric("Data Source", "FRED" if data_source == "FRED API (Recommended)" else "Yahoo Finance")
         
-        # Create tabs
+        # Recession warning
+        if current_spread < 0:
+            st.warning("⚠️ **YIELD CURVE IS INVERTED!** Historically, this signals a recession within 6-18 months. Consider defensive positioning.")
+        elif current_spread < 0.5:
+            st.info("📊 **Yield curve is flattening.** Monitor closely for potential inversion signals.")
+        
+        # Tabs
         tab1, tab2, tab3, tab4 = st.tabs([
             "📈 Yield Curve", 
             "📊 Spread Analysis", 
@@ -634,36 +628,28 @@ if run_analysis:
         
         # Tab 1: Yield Curve
         with tab1:
-            st.subheader("Yield Curve Visualization")
-            
             fig_yield = plot_yield_curve(df, end_date)
             if fig_yield:
                 st.plotly_chart(fig_yield, use_container_width=True)
-            else:
-                st.warning("No yield curve data available for the selected date")
             
-            # Additional curve statistics
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("### Curve Statistics")
                 if not df.empty:
                     latest = df.iloc[-1]
-                    st.metric("Curve Steepness (10Y-2Y)", 
-                             f"{latest.get('10Y', 0) - latest.get('2Y', 0):.2f}%")
+                    st.metric("Curve Steepness (10Y-2Y)", f"{latest.get('10Y', 0) - latest.get('2Y', 0):.2f}%")
                     st.metric("Short End (3M)", f"{latest.get('3M', 0):.2f}%")
                     st.metric("Long End (30Y)", f"{latest.get('30Y', 0):.2f}%")
             
             with col2:
-                st.markdown("### Recent Changes")
-                if len(df) > 5:
-                    changes = df.diff().iloc[-1]
-                    st.metric("10Y 1-Day Change", f"{changes.get('10Y', 0):+.2f}%")
-                    st.metric("2Y 1-Day Change", f"{changes.get('2Y', 0):+.2f}%")
+                st.markdown("### Recent Changes (1 Day)")
+                if len(df) > 1:
+                    changes = df.iloc[-1] - df.iloc[-2]
+                    st.metric("10Y Change", f"{changes.get('10Y', 0):+.2f}%")
+                    st.metric("2Y Change", f"{changes.get('2Y', 0):+.2f}%")
         
         # Tab 2: Spread Analysis
         with tab2:
-            st.subheader("Yield Spread Analysis")
-            
             if not spreads.empty:
                 fig_spreads = plot_spreads(spreads)
                 if fig_spreads:
@@ -672,90 +658,94 @@ if run_analysis:
                 st.markdown("### Current Spreads")
                 current_spreads = spreads.iloc[-1]
                 cols = st.columns(len(current_spreads))
-                for idx, (spread_name, value) in enumerate(current_spreads.items()):
+                for idx, (name, value) in enumerate(current_spreads.items()):
                     if pd.notna(value):
-                        color = "🟢" if value > 0 else "🔴" if value < -0.5 else "🟡"
-                        cols[idx].metric(f"{color} {spread_name.upper()}", f"{value:.2f}%")
+                        cols[idx].metric(f"{name.upper()}", f"{value:.2f}%")
                 
-                # Interpretation
-                st.markdown("### Market Interpretation")
-                if '2s10s' in spreads.columns:
-                    latest_2s10s = spreads['2s10s'].iloc[-1]
-                    if latest_2s10s < 0:
-                        st.warning("⚠️ **INVERTED YIELD CURVE** - Historically signals recession within 6-18 months. Consider defensive positioning.")
-                    elif latest_2s10s < 0.5:
-                        st.info("📊 **Flattening Curve** - Monitor for potential inversion. Economic expansion may be late-cycle.")
-                    else:
-                        st.success("✅ **Normal/Steep Curve** - Economic expansion likely continuing. Risk-on environment.")
-            else:
-                st.info("No spread data available")
+                # Historical spread statistics
+                with st.expander("Spread Statistics"):
+                    st.dataframe(spreads.describe().round(2), use_container_width=True)
         
         # Tab 3: Trading Strategy
         with tab3:
-            st.subheader(f"Trading Strategy: {selected_strategy}")
+            st.subheader(f"Strategy: {selected_strategy} on {selected_etf}")
             
-            if backtest_results and backtest_results.results:
-                results = backtest_results.results
-                metrics = results['metrics']
+            # Import yfinance for ETF data
+            import yfinance as yf
+            
+            # Fetch ETF data
+            etf_data = yf.download(selected_etf, start=start_date, end=end_date, progress=False)
+            if not etf_data.empty and 'Adj Close' in etf_data.columns:
+                etf_prices = etf_data['Adj Close']
+                etf_prices.index = etf_prices.index.tz_localize(None)
                 
-                # Performance metrics
-                col1, col2, col3, col4 = st.columns(4)
+                # Run backtest
+                strategy = YieldCurveTradingStrategy(df, spreads)
+                strategy.generate_signals()
+                backtest_results = strategy.backtest(etf_prices, selected_strategy, transaction_cost)
                 
-                with col1:
-                    st.metric("Strategy Return", f"{metrics['Total Return Strategy']:.2%}")
-                    st.metric("Sharpe Ratio", f"{metrics['Sharpe Ratio']:.2f}")
-                
-                with col2:
-                    st.metric("Benchmark Return", f"{metrics['Total Return Benchmark']:.2%}")
-                    st.metric("Max Drawdown", f"{metrics['Max Drawdown']:.2%}")
-                
-                with col3:
-                    st.metric("Excess Return", f"{metrics['Excess Return']:.2%}")
-                    st.metric("Win Rate", f"{metrics['Win Rate']:.2%}")
-                
-                with col4:
-                    st.metric("Profit Factor", f"{metrics['Profit Factor']:.2f}")
-                    st.metric("Calmar Ratio", f"{metrics['Calmar Ratio']:.2f}")
-                
-                # Cumulative returns chart
-                st.markdown("### Cumulative Returns")
-                fig_returns = go.Figure()
-                fig_returns.add_trace(go.Scatter(
-                    x=results['cumulative_strategy'].index,
-                    y=results['cumulative_strategy'].values,
-                    name='Strategy',
-                    line=dict(color='#2c5f8a', width=2)
-                ))
-                fig_returns.add_trace(go.Scatter(
-                    x=results['cumulative_bh'].index,
-                    y=results['cumulative_bh'].values,
-                    name='Buy & Hold',
-                    line=dict(color='#c17f3a', width=2, dash='dash')
-                ))
-                fig_returns.update_layout(
-                    title='Strategy vs Benchmark',
-                    xaxis_title='Date',
-                    yaxis_title='Cumulative Return',
-                    template='plotly_white',
-                    height=400
-                )
-                st.plotly_chart(fig_returns, use_container_width=True)
-                
-                # Recent signals
-                with st.expander("Recent Trading Signals"):
-                    recent_signals = pd.DataFrame({
-                        'Date': results['signals'].tail(20).index.strftime('%Y-%m-%d'),
-                        'Signal': results['signals'].tail(20).values,
-                        'Action': ['BUY' if x > 0 else 'SELL' if x < 0 else 'HOLD' 
-                                  for x in results['signals'].tail(20).values]
-                    })
-                    st.dataframe(recent_signals, use_container_width=True, hide_index=True)
+                if backtest_results and backtest_results.results:
+                    results = backtest_results.results
+                    metrics = results['metrics']
+                    
+                    # Metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Strategy Return", f"{metrics['Total Return Strategy']:.2%}")
+                        st.metric("Sharpe Ratio", f"{metrics['Sharpe Ratio']:.2f}")
+                    
+                    with col2:
+                        st.metric("Benchmark Return", f"{metrics['Total Return Benchmark']:.2%}")
+                        st.metric("Max Drawdown", f"{metrics['Max Drawdown']:.2%}")
+                    
+                    with col3:
+                        st.metric("Excess Return", f"{metrics['Excess Return']:.2%}")
+                        st.metric("Win Rate", f"{metrics['Win Rate']:.2%}")
+                    
+                    with col4:
+                        st.metric("Profit Factor", f"{metrics['Profit Factor']:.2f}")
+                    
+                    # Cumulative returns chart
+                    fig_returns = go.Figure()
+                    fig_returns.add_trace(go.Scatter(
+                        x=results['cumulative_strategy'].index,
+                        y=results['cumulative_strategy'].values,
+                        name='Strategy',
+                        line=dict(color='#2c5f8a', width=2)
+                    ))
+                    fig_returns.add_trace(go.Scatter(
+                        x=results['cumulative_bh'].index,
+                        y=results['cumulative_bh'].values,
+                        name='Buy & Hold',
+                        line=dict(color='#c17f3a', width=2, dash='dash')
+                    ))
+                    fig_returns.update_layout(
+                        title='Cumulative Returns',
+                        xaxis_title='Date',
+                        yaxis_title='Return',
+                        template='plotly_white',
+                        height=400
+                    )
+                    st.plotly_chart(fig_returns, use_container_width=True)
+                    
+                    # Recent signals
+                    with st.expander("Recent Trading Signals"):
+                        recent = pd.DataFrame({
+                            'Date': results['signals'].tail(20).index.strftime('%Y-%m-%d'),
+                            'Signal': results['signals'].tail(20).values,
+                            'Action': ['BUY' if x > 0 else 'SELL' if x < 0 else 'HOLD' 
+                                      for x in results['signals'].tail(20).values]
+                        })
+                        st.dataframe(recent, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Backtest failed. Try a different date range or ETF.")
             else:
-                st.warning("Backtest results not available. Try a different date range or ETF.")
+                st.error(f"Could not fetch {selected_etf} data")
         
         # Tab 4: Data Explorer
         with tab4:
-            st.subheader("Historical Yield Data")
+            st.subheader("Historical Data")
             
             col1, col2 = st.columns(2)
             
@@ -768,59 +758,58 @@ if run_analysis:
                 if len(df.columns) > 1:
                     st.dataframe(df.corr().round(2), use_container_width=True)
             
-            st.markdown("### Raw Data")
+            st.markdown("### Raw Data (Last 50 rows)")
             st.dataframe(df.tail(50), use_container_width=True)
             
-            # Download buttons
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                csv_yields = df.to_csv()
-                st.download_button("📥 Download Yield Data", csv_yields, "yield_data.csv", "text/csv")
-            
-            with col2:
-                if not spreads.empty:
-                    csv_spreads = spreads.to_csv()
-                    st.download_button("📥 Download Spreads", csv_spreads, "spreads.csv", "text/csv")
-            
-            with col3:
-                if backtest_results and backtest_results.results:
-                    results_df = pd.DataFrame({
-                        'Date': backtest_results.results['cumulative_strategy'].index,
-                        'Strategy_Returns': backtest_results.results['cumulative_strategy'].values,
-                        'Benchmark_Returns': backtest_results.results['cumulative_bh'].values
-                    })
-                    csv_results = results_df.to_csv()
-                    st.download_button("📥 Download Backtest Results", csv_results, "backtest_results.csv", "text/csv")
-    
+            # Download
+            csv = df.to_csv()
+            st.download_button("📥 Download Yield Data (CSV)", csv, f"yield_data_{start_date}_{end_date}.csv", "text/csv")
+
 else:
-    st.info("👈 Configure your analysis parameters in the sidebar and click 'Run Analysis' to begin")
+    st.info("👈 Configure your parameters and click 'Run Analysis' to start")
     
-    with st.expander("📖 Platform Features", expanded=True):
+    with st.expander("📖 About This Platform", expanded=True):
         st.markdown("""
-        ### Features Included:
+        ### Features
         
-        **1. Yield Curve Analysis**
-        - Interactive curve visualization
-        - Historical comparison (1 year ago)
-        - Curve statistics and recent changes
+        **Data Sources:**
+        - **FRED API**: Official Federal Reserve Economic Data (recommended)
+        - **Yahoo Finance**: Fallback data source
         
-        **2. Spread Analysis**
-        - 2s10s (2-year vs 10-year) - Key recession indicator
-        - 3m10y (3-month vs 10-year)
-        - 5s30s (5-year vs 30-year)
-        - Market interpretation and warnings
+        **Analysis Modules:**
         
-        **3. Trading Strategies**
-        - Multiple strategy types (Classic, Momentum, Composite)
-        - Full backtesting with transaction costs
-        - Performance metrics (Sharpe, Drawdown, Win Rate)
+        1. **Yield Curve Analysis**
+           - Interactive curve visualization
+           - Historical comparison (1 year ago)
+           - Curve statistics and daily changes
         
-        **4. Data Export**
-        - Download yield data
-        - Export spreads
-        - Save backtest results
+        2. **Spread Analysis**
+           - 2s10s (2-year vs 10-year) - Key recession indicator
+           - 3m10y (3-month vs 10-year)
+           - Historical spread visualization
+        
+        3. **Trading Strategy**
+           - Multiple strategy types (Classic, 3m10y, Composite)
+           - Backtesting with transaction costs
+           - Performance metrics (Sharpe, Drawdown, Win Rate)
+        
+        4. **Data Export**
+           - Download yield data as CSV
+           - Export for further analysis
+        
+        ### Getting a FRED API Key
+        
+        1. Visit [FRED API website](https://fred.stlouisfed.org/docs/api/api_key.html)
+        2. Click "Request API Key"
+        3. Register for a free account
+        4. Your API key will be emailed instantly
+        5. Enter it in the sidebar
+        
+        ### Risk Warning
+        
+        Past performance does not guarantee future results. This platform is for educational purposes only.
         """)
 
 # Footer
 st.markdown("---")
-st.markdown(f"*Data as of {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Data source: FRED via yfinance*")
+st.markdown(f"*Data source: FRED | Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
