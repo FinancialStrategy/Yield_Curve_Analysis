@@ -1,15 +1,12 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+import streamlit as st
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
-
-# =============================================================================
-# ENHANCED YIELD CURVE STRATEGY
-# =============================================================================
 
 class YieldCurveStrategy:
     """Advanced yield curve trading strategy with multiple signals"""
@@ -23,11 +20,19 @@ class YieldCurveStrategy:
         
     def fetch_data(self):
         """Fetch treasury yields and bond ETF data"""
-        print("Fetching market data...")
         
-        # Treasury yields
+        # Treasury yields - FIXED: Handle MultiIndex columns
         tickers = ['^IRX', '^FVX', '^TNX', '^TYX']  # 3M, 5Y, 10Y, 30Y
-        yields = yf.download(tickers, start=self.start_date, end=self.end_date)['Adj Close']
+        df = yf.download(tickers, start=self.start_date, end=self.end_date)
+        
+        # Check if we have MultiIndex columns
+        if isinstance(df.columns, pd.MultiIndex):
+            # Extract 'Adj Close' for all tickers
+            yields = df['Adj Close'].copy()
+        else:
+            # Fallback for single ticker or different structure
+            yields = df[['Adj Close']] if 'Adj Close' in df.columns else df
+        
         yields.columns = ['3M', '5Y', '10Y', '30Y']
         yields.index = yields.index.tz_localize(None)
         
@@ -41,20 +46,30 @@ class YieldCurveStrategy:
         
         bond_data = {}
         for ticker, name in etfs.items():
-            price = yf.download(ticker, start=self.start_date, end=self.end_date)['Adj Close']
+            df_etf = yf.download(ticker, start=self.start_date, end=self.end_date)
+            
+            # Handle MultiIndex for ETF data
+            if isinstance(df_etf.columns, pd.MultiIndex):
+                price = df_etf['Adj Close'].copy()
+            else:
+                price = df_etf['Adj Close'] if 'Adj Close' in df_etf.columns else df_etf['Close']
+            
             price.index = price.index.tz_localize(None)
             bond_data[ticker] = price
         
         bond_prices = pd.DataFrame(bond_data)
         
-        # Economic indicators for context
+        # Economic indicators
         try:
-            # VIX for risk sentiment
-            vix = yf.download('^VIX', start=self.start_date, end=self.end_date)['Adj Close']
-            vix.index = vix.index.tz_localize(None)
-            bond_prices['VIX'] = vix
-        except:
-            print("VIX data unavailable")
+            vix = yf.download('^VIX', start=self.start_date, end=self.end_date)
+            if isinstance(vix.columns, pd.MultiIndex):
+                vix_series = vix['Adj Close'].copy()
+            else:
+                vix_series = vix['Adj Close'] if 'Adj Close' in vix.columns else vix['Close']
+            vix_series.index = vix_series.index.tz_localize(None)
+            bond_prices['VIX'] = vix_series
+        except Exception as e:
+            print(f"VIX data unavailable: {e}")
             
         self.data = {'yields': yields, 'bond_prices': bond_prices}
         return self
@@ -65,13 +80,14 @@ class YieldCurveStrategy:
         
         spreads = pd.DataFrame(index=yields.index)
         spreads['10Y-3M'] = yields['10Y'] - yields['3M']
-        spreads['10Y-2Y'] = yields['10Y'] - yields['5Y']  # Using 5Y as proxy for 2Y
+        spreads['10Y-5Y'] = yields['10Y'] - yields['5Y']
         spreads['30Y-10Y'] = yields['30Y'] - yields['10Y']
         spreads['Slope'] = spreads['10Y-3M']
         
         # Normalize spreads for comparison
         for col in spreads.columns:
-            spreads[f'{col}_Zscore'] = (spreads[col] - spreads[col].rolling(252).mean()) / spreads[col].rolling(252).std()
+            if col not in ['10Y-5Y', '30Y-10Y', 'Slope']:
+                spreads[f'{col}_Zscore'] = (spreads[col] - spreads[col].rolling(252).mean()) / spreads[col].rolling(252).std()
             
         self.data['spreads'] = spreads
         return self
@@ -90,25 +106,29 @@ class YieldCurveStrategy:
         # Strategy 2: Momentum-enhanced signal
         signals['Momentum'] = 0
         spread_change = spreads['10Y-3M'].diff(20)  # 1-month change
-        signals.loc[(spreads['10Y-3M'] < 0) & (spread_change < 0), 'Momentum'] = 1  # Inverting further
-        signals.loc[(spreads['10Y-3M'] > 0) & (spread_change > 0), 'Momentum'] = -1  # Steepening further
+        signals.loc[(spreads['10Y-3M'] < 0) & (spread_change < 0), 'Momentum'] = 1
+        signals.loc[(spreads['10Y-3M'] > 0) & (spread_change > 0), 'Momentum'] = -1
         
         # Strategy 3: Z-score based mean reversion
         signals['ZScore'] = 0
-        zscore = spreads['10Y-3M_Zscore']
-        signals.loc[zscore < -1.5, 'ZScore'] = 1  # Extreme inversion
-        signals.loc[zscore > 1.5, 'ZScore'] = -1  # Extreme steepening
+        if '10Y-3M_Zscore' in spreads.columns:
+            zscore = spreads['10Y-3M_Zscore']
+            signals.loc[zscore < -1.5, 'ZScore'] = 1
+            signals.loc[zscore > 1.5, 'ZScore'] = -1
         
         # Strategy 4: Composite (average of all signals)
         signals['Composite'] = (signals['Classic'] + signals['Momentum'] + signals['ZScore']) / 3
         signals['Composite'] = signals['Composite'].clip(-1, 1)
         
         # Strategy 5: Adaptive threshold based on volatility
-        vol = self.data['bond_prices']['TLT'].pct_change().rolling(20).std()
-        adaptive_threshold = 0.5 + vol * 10
-        signals['Adaptive'] = 0
-        signals.loc[spreads['10Y-3M'] < -adaptive_threshold, 'Adaptive'] = 1
-        signals.loc[spreads['10Y-3M'] > adaptive_threshold, 'Adaptive'] = -1
+        if 'VIX' in self.data['bond_prices'].columns:
+            vol = self.data['bond_prices']['VIX'] / 20  # Normalize VIX
+            adaptive_threshold = 0.5 + vol.clip(0, 1)
+            signals['Adaptive'] = 0
+            signals.loc[spreads['10Y-3M'] < -adaptive_threshold, 'Adaptive'] = 1
+            signals.loc[spreads['10Y-3M'] > adaptive_threshold, 'Adaptive'] = -1
+        else:
+            signals['Adaptive'] = signals['Classic']
         
         self.signals = signals
         return self
@@ -161,124 +181,107 @@ class YieldCurveStrategy:
         strategy_returns = strategy_returns.dropna()
         benchmark_returns = benchmark_returns.loc[strategy_returns.index]
         
+        if len(strategy_returns) == 0 or strategy_returns.std() == 0:
+            return {'Error': 'Insufficient data for metrics calculation'}
+        
         # Annualization factor
         ann_factor = np.sqrt(252)
         
         metrics = {
-            'Total Return Strategy': cum_strategy.iloc[-1] - 1,
-            'Total Return Benchmark': cum_benchmark.iloc[-1] - 1,
-            'Excess Return': (cum_strategy.iloc[-1] - 1) - (cum_benchmark.iloc[-1] - 1),
+            'Total Return Strategy': float(cum_strategy.iloc[-1] - 1) if len(cum_strategy) > 0 else 0,
+            'Total Return Benchmark': float(cum_benchmark.iloc[-1] - 1) if len(cum_benchmark) > 0 else 0,
+            'Excess Return': 0,
             'Sharpe Ratio': (strategy_returns.mean() / strategy_returns.std()) * ann_factor,
-            'Benchmark Sharpe': (benchmark_returns.mean() / benchmark_returns.std()) * ann_factor,
+            'Benchmark Sharpe': (benchmark_returns.mean() / benchmark_returns.std()) * ann_factor if benchmark_returns.std() > 0 else 0,
             'Max Drawdown': self.calculate_max_drawdown(cum_strategy),
             'Benchmark Drawdown': self.calculate_max_drawdown(cum_benchmark),
-            'Win Rate': (strategy_returns[strategy_returns > 0].count() / strategy_returns.count()),
-            'Average Win': strategy_returns[strategy_returns > 0].mean(),
-            'Average Loss': strategy_returns[strategy_returns < 0].mean(),
-            'Profit Factor': abs(strategy_returns[strategy_returns > 0].sum() / strategy_returns[strategy_returns < 0].sum()),
-            'Calmar Ratio': ((cum_strategy.iloc[-1] ** (252/len(cum_strategy)) - 1) / 
-                           abs(self.calculate_max_drawdown(cum_strategy))) if self.calculate_max_drawdown(cum_strategy) != 0 else 0
+            'Win Rate': float((strategy_returns[strategy_returns > 0].count() / strategy_returns.count())) if strategy_returns.count() > 0 else 0,
+            'Average Win': float(strategy_returns[strategy_returns > 0].mean()) if len(strategy_returns[strategy_returns > 0]) > 0 else 0,
+            'Average Loss': float(strategy_returns[strategy_returns < 0].mean()) if len(strategy_returns[strategy_returns < 0]) > 0 else 0,
+            'Profit Factor': 0,
+            'Calmar Ratio': 0
         }
         
-        # Add beta and alpha
-        if len(strategy_returns) > 0 and len(benchmark_returns) > 0:
-            covariance = np.cov(strategy_returns, benchmark_returns)[0, 1]
-            variance = np.var(benchmark_returns)
-            metrics['Beta'] = covariance / variance if variance != 0 else 0
-            metrics['Alpha'] = (strategy_returns.mean() - metrics['Beta'] * benchmark_returns.mean()) * ann_factor
+        metrics['Excess Return'] = metrics['Total Return Strategy'] - metrics['Total Return Benchmark']
+        
+        if metrics['Average Loss'] != 0:
+            metrics['Profit Factor'] = abs(metrics['Average Win'] / metrics['Average Loss'])
+        
+        if metrics['Max Drawdown'] != 0:
+            annual_return = (cum_strategy.iloc[-1] ** (252/len(cum_strategy)) - 1) if len(cum_strategy) > 0 else 0
+            metrics['Calmar Ratio'] = annual_return / abs(metrics['Max Drawdown'])
         
         return metrics
     
     @staticmethod
     def calculate_max_drawdown(cumulative_returns):
         """Calculate maximum drawdown"""
+        if len(cumulative_returns) == 0:
+            return 0
         rolling_max = cumulative_returns.expanding().max()
         drawdown = (cumulative_returns - rolling_max) / rolling_max
-        return drawdown.min()
+        return float(drawdown.min())
     
-    def plot_results(self):
-        """Create comprehensive visualization"""
+    def get_plotly_charts(self):
+        """Create interactive Plotly charts for Streamlit"""
         if self.results is None:
-            print("No results to plot. Run backtest first.")
-            return
+            return None
         
-        fig, axes = plt.subplots(3, 2, figsize=(15, 12))
-        fig.suptitle(f'Yield Curve Strategy Backtest - {self.results["signal_col"]} Signal on {self.results["etf"]}', 
-                     fontsize=14, fontweight='bold')
+        # Chart 1: Cumulative Returns
+        fig1 = go.Figure()
+        fig1.add_trace(go.Scatter(
+            x=self.results['cumulative_strategy'].index,
+            y=self.results['cumulative_strategy'].values,
+            mode='lines',
+            name='Strategy',
+            line=dict(color='#2c5f8a', width=2)
+        ))
+        fig1.add_trace(go.Scatter(
+            x=self.results['cumulative_bh'].index,
+            y=self.results['cumulative_bh'].values,
+            mode='lines',
+            name='Buy & Hold',
+            line=dict(color='#c17f3a', width=2, dash='dash')
+        ))
+        fig1.update_layout(
+            title=f'Cumulative Returns - {self.results["signal_col"]} Strategy',
+            xaxis_title='Date',
+            yaxis_title='Cumulative Return',
+            hovermode='x unified',
+            template='plotly_white'
+        )
         
-        # 1. Cumulative returns comparison
-        ax1 = axes[0, 0]
-        self.results['cumulative_strategy'].plot(ax=ax1, label='Strategy', linewidth=2)
-        self.results['cumulative_bh'].plot(ax=ax1, label='Buy & Hold', linewidth=2, alpha=0.7)
-        ax1.set_title('Cumulative Returns Comparison')
-        ax1.set_ylabel('Cumulative Return')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
+        # Chart 2: Yield Spread and Signals
+        fig2 = make_subplots(specs=[[{"secondary_y": True}]])
         
-        # 2. Yield spread and signals
-        ax2 = axes[0, 1]
         spreads = self.data['spreads']['10Y-3M'].loc[self.results['signals'].index]
-        ax2.plot(spreads.index, spreads, label='10Y-3M Spread', color='blue', linewidth=1.5)
-        ax2.axhline(y=0, color='red', linestyle='--', alpha=0.5)
-        ax2_twin = ax2.twinx()
-        self.results['signals'].plot(ax=ax2_twin, label='Signal', color='green', alpha=0.7, linewidth=1)
-        ax2.set_title('Yield Spread and Trading Signals')
-        ax2.set_ylabel('Spread (%)')
-        ax2_twin.set_ylabel('Signal')
-        ax2.grid(True, alpha=0.3)
+        fig2.add_trace(
+            go.Scatter(x=spreads.index, y=spreads.values, name='10Y-3M Spread', line=dict(color='blue')),
+            secondary_y=False
+        )
+        fig2.add_trace(
+            go.Scatter(x=self.results['signals'].index, y=self.results['signals'].values, 
+                      name='Signal', line=dict(color='green', width=1)),
+            secondary_y=True
+        )
+        fig2.add_hline(y=0, line_dash="dash", line_color="red", secondary_y=False)
+        fig2.update_layout(title='Yield Spread and Trading Signals', template='plotly_white')
+        fig2.update_yaxes(title_text="Spread (bps)", secondary_y=False)
+        fig2.update_yaxes(title_text="Signal (-1 to 1)", secondary_y=True)
         
-        # 3. Drawdown analysis
-        ax3 = axes[1, 0]
+        # Chart 3: Drawdown
+        fig3 = go.Figure()
         strategy_dd = self.calculate_drawdown_series(self.results['cumulative_strategy'])
         benchmark_dd = self.calculate_drawdown_series(self.results['cumulative_bh'])
-        strategy_dd.plot(ax=ax3, label='Strategy', color='red', linewidth=1.5)
-        benchmark_dd.plot(ax=ax3, label='Benchmark', color='orange', alpha=0.7)
-        ax3.set_title('Drawdown Analysis')
-        ax3.set_ylabel('Drawdown (%)')
-        ax3.legend()
-        ax3.grid(True, alpha=0.3)
-        ax3.fill_between(strategy_dd.index, 0, strategy_dd.values, alpha=0.3, color='red')
         
-        # 4. Rolling Sharpe ratio
-        ax4 = axes[1, 1]
-        rolling_sharpe = self.results['strategy_returns'].rolling(252).apply(
-            lambda x: (x.mean() / x.std()) * np.sqrt(252) if x.std() != 0 else 0
-        )
-        rolling_sharpe.plot(ax=ax4, color='purple', linewidth=1.5)
-        ax4.axhline(y=0, color='black', linestyle='-', alpha=0.3)
-        ax4.axhline(y=1, color='green', linestyle='--', alpha=0.5, label='Good')
-        ax4.axhline(y=-1, color='red', linestyle='--', alpha=0.5, label='Poor')
-        ax4.set_title('Rolling 1-Year Sharpe Ratio')
-        ax4.set_ylabel('Sharpe Ratio')
-        ax4.grid(True, alpha=0.3)
+        fig3.add_trace(go.Scatter(x=strategy_dd.index, y=strategy_dd.values, name='Strategy', 
+                                  fill='tozeroy', line=dict(color='red')))
+        fig3.add_trace(go.Scatter(x=benchmark_dd.index, y=benchmark_dd.values, name='Benchmark', 
+                                  line=dict(color='orange', dash='dash')))
+        fig3.update_layout(title='Drawdown Analysis', xaxis_title='Date', 
+                          yaxis_title='Drawdown (%)', template='plotly_white')
         
-        # 5. Performance metrics table
-        ax5 = axes[2, 0]
-        ax5.axis('tight')
-        ax5.axis('off')
-        metrics_df = pd.DataFrame([self.results['metrics']]).T
-        metrics_df.columns = ['Value']
-        metrics_df['Value'] = metrics_df['Value'].apply(lambda x: f'{x:.3f}' if isinstance(x, float) else x)
-        table = ax5.table(cellText=metrics_df.values, rowLabels=metrics_df.index, 
-                          colLabels=['Value'], cellLoc='right', loc='center')
-        table.auto_set_font_size(False)
-        table.set_fontsize(9)
-        ax5.set_title('Performance Metrics', fontsize=10, pad=20)
-        
-        # 6. Signal distribution
-        ax6 = axes[2, 1]
-        signal_counts = self.results['signals'].value_counts()
-        colors = ['green' if x > 0 else 'red' if x < 0 else 'gray' for x in signal_counts.index]
-        ax6.bar(signal_counts.index.astype(str), signal_counts.values, color=colors, alpha=0.7)
-        ax6.set_title('Signal Distribution')
-        ax6.set_xlabel('Signal')
-        ax6.set_ylabel('Frequency')
-        ax6.grid(True, alpha=0.3, axis='y')
-        
-        plt.tight_layout()
-        plt.show()
-        
-        return fig
+        return {'returns': fig1, 'spread': fig2, 'drawdown': fig3}
     
     @staticmethod
     def calculate_drawdown_series(cumulative_returns):
@@ -286,187 +289,116 @@ class YieldCurveStrategy:
         rolling_max = cumulative_returns.expanding().max()
         drawdown = (cumulative_returns - rolling_max) / rolling_max
         return drawdown * 100
-    
-    def print_summary(self):
-        """Print performance summary"""
-        if self.results is None:
-            print("No results to display. Run backtest first.")
-            return
-        
-        metrics = self.results['metrics']
-        
-        print("\n" + "="*80)
-        print(f"YIELD CURVE STRATEGY BACKTEST RESULTS")
-        print(f"Signal: {self.results['signal_col']} | ETF: {self.results['etf']}")
-        print("="*80)
-        
-        print(f"\n📊 RETURNS:")
-        print(f"   Strategy Total Return:  {metrics['Total Return Strategy']:.2%}")
-        print(f"   Benchmark Total Return: {metrics['Total Return Benchmark']:.2%}")
-        print(f"   Excess Return:          {metrics['Excess Return']:.2%}")
-        
-        print(f"\n📈 RISK METRICS:")
-        print(f"   Strategy Sharpe:        {metrics['Sharpe Ratio']:.2f}")
-        print(f"   Benchmark Sharpe:       {metrics['Benchmark Sharpe']:.2f}")
-        print(f"   Strategy Max DD:        {metrics['Max Drawdown']:.2%}")
-        print(f"   Benchmark Max DD:       {metrics['Benchmark Drawdown']:.2%}")
-        print(f"   Calmar Ratio:           {metrics['Calmar Ratio']:.2f}")
-        
-        print(f"\n🎯 TRADE STATISTICS:")
-        print(f"   Win Rate:               {metrics['Win Rate']:.2%}")
-        print(f"   Profit Factor:          {metrics['Profit Factor']:.2f}")
-        print(f"   Avg Win / Avg Loss:     {abs(metrics['Average Win'] / metrics['Average Loss']):.2f}")
-        
-        if 'Beta' in metrics:
-            print(f"\n📐 MARKET EXPOSURE:")
-            print(f"   Beta:                   {metrics['Beta']:.2f}")
-            print(f"   Alpha (annualized):     {metrics['Alpha']:.2%}")
-        
-        print("\n" + "="*80)
 
-# =============================================================================
-# COMPARATIVE ANALYSIS
-# =============================================================================
+# Streamlit UI
+st.set_page_config(page_title="Yield Curve Strategy Backtest", layout="wide")
 
-def compare_strategies():
-    """Compare multiple strategy variations"""
-    
-    strategy = YieldCurveStrategy(start_date='2015-01-01', end_date='2023-12-31')
-    strategy.fetch_data().calculate_spreads()
-    
-    results = {}
-    
-    # Test different signal types
-    signal_types = ['Classic', 'Momentum', 'ZScore', 'Composite', 'Adaptive']
-    
-    for signal in signal_types:
-        print(f"\nTesting {signal} strategy...")
-        strategy.generate_signals().backtest(etf='TLT', signal_col=signal)
-        results[signal] = strategy.results['metrics']
-    
-    # Create comparison dataframe
-    comparison = pd.DataFrame(results).T
-    
-    # Sort by Sharpe ratio
-    comparison = comparison.sort_values('Sharpe Ratio', ascending=False)
-    
-    print("\n" + "="*80)
-    print("STRATEGY COMPARISON (TLT, 2015-2023)")
-    print("="*80)
-    
-    display_cols = ['Total Return Strategy', 'Sharpe Ratio', 'Max Drawdown', 
-                    'Win Rate', 'Profit Factor', 'Calmar Ratio']
-    
-    for col in display_cols:
-        comparison[col] = comparison[col].apply(lambda x: f'{x:.3f}' if isinstance(x, float) else x)
-    
-    print(comparison[display_cols].to_string())
-    
-    return comparison
+st.title("📈 Yield Curve Trading Strategy Backtest")
+st.markdown("Advanced fixed-income strategy using yield curve inversion signals")
 
-# =============================================================================
-# REAL-TIME SIGNAL GENERATION
-# =============================================================================
+# Sidebar controls
+with st.sidebar:
+    st.header("⚙️ Strategy Configuration")
+    
+    start_date = st.date_input("Start Date", pd.to_datetime('2015-01-01'))
+    end_date = st.date_input("End Date", pd.to_datetime('2023-12-31'))
+    
+    etf_choice = st.selectbox("Bond ETF", ['TLT', 'IEF', 'SHY', 'BND'])
+    
+    signal_choice = st.selectbox("Signal Type", ['Composite', 'Classic', 'Momentum', 'ZScore', 'Adaptive'])
+    
+    transaction_cost = st.slider("Transaction Cost (%)", 0.0, 0.5, 0.1, 0.01) / 100
+    
+    run_backtest = st.button("🚀 Run Backtest", type="primary")
 
-def get_current_signal():
-    """Generate current trading signal based on latest data"""
-    
-    try:
-        # Fetch latest yields
-        yields = yf.download(['^IRX', '^TNX'], period='5d')['Adj Close']
-        yields.columns = ['3M', '10Y']
-        yields.index = yields.index.tz_localize(None)
-        
-        latest_3m = yields['3M'].iloc[-1]
-        latest_10y = yields['10Y'].iloc[-1]
-        spread = latest_10y - latest_3m
-        
-        # Calculate historical context (using last 252 days)
-        hist_yields = yf.download(['^IRX', '^TNX'], period='1y')['Adj Close']
-        hist_yields.columns = ['3M', '10Y']
-        hist_spread = hist_yields['10Y'] - hist_yields['3M']
-        
-        zscore = (spread - hist_spread.mean()) / hist_spread.std()
-        
-        # Generate signal
-        if spread < 0 and zscore < -1:
-            signal = "STRONG BUY"
-            confidence = "High"
-            rationale = "Deep inversion with extreme negative z-score"
-        elif spread < 0:
-            signal = "BUY"
-            confidence = "Medium"
-            rationale = "Yield curve inverted, historically precedes bond rallies"
-        elif spread > 1.5:
-            signal = "SELL"
-            confidence = "Medium"
-            rationale = "Very steep curve, bond yields may rise further"
-        elif spread > 0.5:
-            signal = "REDUCE"
-            confidence = "Low"
-            rationale = "Moderately steep curve, caution advised"
-        else:
-            signal = "NEUTRAL"
-            confidence = "Low"
-            rationale = "Normal curve shape, no strong signal"
-        
-        print("\n" + "="*60)
-        print("CURRENT YIELD CURVE SIGNAL")
-        print("="*60)
-        print(f"10Y Yield:        {latest_10y:.2f}%")
-        print(f"3M Yield:         {latest_3m:.2f}%")
-        print(f"10Y-3M Spread:    {spread:.2f}%")
-        print(f"Z-Score:          {zscore:.2f}")
-        print(f"\n🚦 SIGNAL:        {signal}")
-        print(f"📊 Confidence:    {confidence}")
-        print(f"💡 Rationale:     {rationale}")
-        print("="*60)
-        
-        return {
-            'signal': signal,
-            'spread': spread,
-            'zscore': zscore,
-            'confidence': confidence,
-            'rationale': rationale
-        }
-        
-    except Exception as e:
-        print(f"Error fetching current data: {e}")
-        return None
+# Main content
+if run_backtest:
+    with st.spinner("Fetching data and running backtest..."):
+        try:
+            # Initialize and run strategy
+            strategy = YieldCurveStrategy(
+                start_date=start_date.strftime('%Y-%m-%d'),
+                end_date=end_date.strftime('%Y-%m-%d')
+            )
+            
+            strategy.fetch_data().calculate_spreads()
+            strategy.generate_signals().backtest(
+                etf=etf_choice, 
+                signal_col=signal_choice,
+                transaction_cost=transaction_cost
+            )
+            
+            # Display metrics
+            st.subheader("📊 Performance Metrics")
+            
+            metrics = strategy.results['metrics']
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Total Return", f"{metrics['Total Return Strategy']:.2%}")
+                st.metric("Sharpe Ratio", f"{metrics['Sharpe Ratio']:.2f}")
+            
+            with col2:
+                st.metric("Benchmark Return", f"{metrics['Total Return Benchmark']:.2%}")
+                st.metric("Benchmark Sharpe", f"{metrics['Benchmark Sharpe']:.2f}")
+            
+            with col3:
+                st.metric("Max Drawdown", f"{metrics['Max Drawdown']:.2%}")
+                st.metric("Win Rate", f"{metrics['Win Rate']:.2%}")
+            
+            with col4:
+                st.metric("Excess Return", f"{metrics['Excess Return']:.2%}")
+                st.metric("Profit Factor", f"{metrics['Profit Factor']:.2f}")
+            
+            # Display charts
+            st.subheader("📈 Strategy Visualization")
+            charts = strategy.get_plotly_charts()
+            
+            if charts:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.plotly_chart(charts['returns'], use_container_width=True)
+                with col2:
+                    st.plotly_chart(charts['spread'], use_container_width=True)
+                
+                st.plotly_chart(charts['drawdown'], use_container_width=True)
+            
+            # Display signal distribution
+            st.subheader("🎯 Signal Distribution")
+            signal_counts = strategy.results['signals'].value_counts()
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Buy Signals", int(signal_counts.get(1, 0)))
+            with col2:
+                st.metric("Sell Signals", int(signal_counts.get(-1, 0)))
+            with col3:
+                st.metric("Neutral", int(signal_counts.get(0, 0)))
+            
+        except Exception as e:
+            st.error(f"Error running backtest: {str(e)}")
+            st.info("Try adjusting the date range or check your internet connection.")
 
-# =============================================================================
-# MAIN EXECUTION
-# =============================================================================
-
-if __name__ == "__main__":
+else:
+    st.info("👈 Configure your strategy parameters and click 'Run Backtest' to start")
     
-    # Run backtest
-    print("🚀 INITIALIZING YIELD CURVE STRATEGY BACKTEST")
-    print("-" * 60)
+    # Show explanation
+    st.markdown("""
+    ### How This Strategy Works
     
-    # Test on TLT (long-term bonds)
-    strategy = YieldCurveStrategy(start_date='2010-01-01', end_date='2023-12-31')
-    strategy.fetch_data().calculate_spreads()
-    strategy.generate_signals().backtest(etf='TLT', signal_col='Composite')
+    The **Yield Curve Inversion Strategy** is based on a well-documented market anomaly:
     
-    # Display results
-    strategy.print_summary()
-    strategy.plot_results()
+    - **BUY Signal**: When the yield curve inverts (10Y - 3M < 0), historically this precedes economic recessions and bond rallies
+    - **SELL Signal**: When the curve is steep (10Y - 3M > 0.5%), economic expansion typically leads to rising yields
     
-    # Compare different strategies
-    print("\n" + "🔄 RUNNING STRATEGY COMPARISON")
-    comparison = compare_strategies()
+    ### Multiple Signal Variants
     
-    # Get current market signal
-    print("\n" + "📡 GENERATING CURRENT MARKET SIGNAL")
-    current_signal = get_current_signal()
+    - **Classic**: Simple inversion-based signal
+    - **Momentum**: Incorporates spread momentum
+    - **ZScore**: Mean reversion using statistical z-scores  
+    - **Adaptive**: Adjusts thresholds based on market volatility (VIX)
+    - **Composite**: Ensemble average of all signals
     
-    # Additional analysis: Different bond maturities
-    print("\n" + "🏦 TESTING ACROSS DIFFERENT MATURITIES")
+    ### Risk Warning
     
-    for etf in ['TLT', 'IEF', 'SHY']:
-        strategy.backtest(etf=etf, signal_col='Composite')
-        print(f"\n{etf} Results:")
-        print(f"  Total Return: {strategy.results['metrics']['Total Return Strategy']:.2%}")
-        print(f"  Sharpe Ratio: {strategy.results['metrics']['Sharpe Ratio']:.2f}")
-        print(f"  Max Drawdown: {strategy.results['metrics']['Max Drawdown']:.2%}")
+    Past performance does not guarantee future results. This strategy is for educational purposes only.
+    """)
