@@ -12,6 +12,7 @@ from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -167,6 +168,21 @@ def fetch_yahoo_data(ticker, start_date, end_date):
     except Exception as e:
         st.warning(f"Could not fetch {ticker}: {e}")
     return pd.Series(dtype='float64')
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_tlt_data(start_date, end_date):
+    """
+    Fetch TLT price data (20+ Year Treasury Bonds)
+    This function is specifically for the yield spread trading strategy backtest
+    """
+    try:
+        tlt_data = yf.download('TLT', start=start_date, end=end_date, progress=False)['Adj Close']
+        # Remove timezone information from TLT data
+        tlt_data.index = tlt_data.index.tz_localize(None)
+        return tlt_data
+    except Exception as e:
+        st.error(f"Could not fetch TLT data: {e}")
+        return pd.Series(dtype='float64')
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_bundle(start_date, end_date):
@@ -367,6 +383,446 @@ def identify_recessions(recession_series):
     return recessions
 
 # =============================================================================
+# YIELD SPREAD TRADING STRATEGY - STEP 5: DEVELOPING A SIMPLE YIELD CURVE TRADING STRATEGY
+# =============================================================================
+
+def develop_yield_spread_trading_strategy(yield_df):
+    """
+    Step 5: Developing a Simple Yield Curve Trading Strategy
+    
+    One basic fixed-income trading strategy based on the yield curve is to buy long-term bonds 
+    when the yield curve is inverted (indicating an economic downturn) and sell when the curve 
+    is normal (indicating growth).
+    
+    This function builds a simple trading strategy based on the 10Y-3M spread.
+    """
+    if yield_df.empty:
+        return None, None
+    
+    # Create a copy of the data to avoid modifying the original
+    data = yield_df.copy()
+    
+    # Calculate yield spread (10Y - 3M)
+    if '10Y' in data.columns and '3M' in data.columns:
+        data['10Y-3M Spread'] = data['10Y'] - data['3M']
+    else:
+        st.error("Required columns '10Y' and '3M' not found for strategy development")
+        return None, None
+    
+    # Define a simple strategy: Buy bonds when the spread is negative (inverted yield curve), sell when positive (normal curve)
+    # Signal = 1: Buy when inverted (spread < 0)
+    # Signal = -1: Sell when normal (spread > 0)
+    # Signal = 0: No action when spread = 0
+    data['Signal'] = 0
+    data.loc[data['10Y-3M Spread'] < 0, 'Signal'] = 1   # Buy when inverted
+    data.loc[data['10Y-3M Spread'] > 0, 'Signal'] = -1  # Sell when normal
+    
+    return data[['10Y-3M Spread', 'Signal']], data
+
+def plot_trading_signals(strategy_data):
+    """
+    Plot the trading signals to visualize trading opportunities
+    
+    The trading strategy generates a buy signal when the yield curve is inverted (negative spread) 
+    and a sell signal when the curve normalizes (positive spread).
+    The signal is plotted over time to help visualize trading opportunities.
+    """
+    if strategy_data is None or strategy_data.empty:
+        return None
+    
+    fig = go.Figure()
+    
+    # Add trading signal line
+    fig.add_trace(go.Scatter(
+        x=strategy_data.index,
+        y=strategy_data['Signal'],
+        mode='lines',
+        name='Trading Signal',
+        line=dict(color='#2c5f8a', width=2),
+        fill='tozeroy',
+        fillcolor='rgba(44, 95, 138, 0.2'
+    ))
+    
+    # Add horizontal lines for reference
+    fig.add_hline(y=1, line_dash='dash', line_color='green', annotation_text="BUY Signal (Inverted Curve)", annotation_position="top right")
+    fig.add_hline(y=-1, line_dash='dash', line_color='red', annotation_text="SELL Signal (Normal Curve)", annotation_position="bottom right")
+    fig.add_hline(y=0, line_dash='dot', line_color='gray')
+    
+    # Color background based on signal
+    for i in range(len(strategy_data) - 1):
+        if strategy_data['Signal'].iloc[i] == 1:
+            fig.add_vrect(x0=strategy_data.index[i], x1=strategy_data.index[i+1], 
+                         fillcolor="green", opacity=0.1, line_width=0)
+        elif strategy_data['Signal'].iloc[i] == -1:
+            fig.add_vrect(x0=strategy_data.index[i], x1=strategy_data.index[i+1], 
+                         fillcolor="red", opacity=0.1, line_width=0)
+    
+    fig.update_layout(
+        title='Trading Signals Based on Yield Spread (10Y-3M)',
+        xaxis_title='Date',
+        yaxis_title='Signal (1 = Buy, -1 = Sell, 0 = Neutral)',
+        template='plotly_white',
+        height=500,
+        showlegend=True
+    )
+    
+    return fig
+
+def display_signals_table(strategy_data, num_rows=10):
+    """
+    Display the trading signals table showing the last N rows
+    """
+    if strategy_data is None or strategy_data.empty:
+        return None
+    
+    # Display signals table
+    display_df = strategy_data[['10Y-3M Spread', 'Signal']].tail(num_rows).copy()
+    display_df['10Y-3M Spread'] = display_df['10Y-3M Spread'].apply(lambda x: f"{x:.2f}%")
+    display_df['Signal_Interpretation'] = display_df['Signal'].apply(
+        lambda x: 'BUY (Inverted Curve)' if x == 1 else 'SELL (Normal Curve)' if x == -1 else 'NEUTRAL'
+    )
+    
+    return display_df
+
+# =============================================================================
+# BACKTESTING THE STRATEGY - STEP 6: BACKTESTING THE STRATEGY
+# =============================================================================
+
+def backtest_yield_spread_strategy(yield_df, start_date, end_date, selected_etf='TLT'):
+    """
+    Step 6: Backtesting the Strategy
+    
+    To evaluate the performance of this strategy, we backtest it using bond prices or 
+    Total Return Bond ETFs like TLT (20+ Year Treasury Bonds).
+    
+    This function assumes we invest in TLT based on the signal.
+    """
+    if yield_df.empty:
+        return None, None, None
+    
+    # Create a copy of the data
+    data = yield_df.copy()
+    
+    # Calculate yield spread (10Y - 3M)
+    if '10Y' in data.columns and '3M' in data.columns:
+        data['10Y-3M Spread'] = data['10Y'] - data['3M']
+    else:
+        st.error("Required columns '10Y' and '3M' not found for backtesting")
+        return None, None, None
+    
+    # Define the strategy: Buy bonds when the spread is negative (inverted yield curve), sell when positive (normal curve)
+    data['Signal'] = 0
+    data.loc[data['10Y-3M Spread'] < 0, 'Signal'] = 1   # Buy when inverted
+    data.loc[data['10Y-3M Spread'] > 0, 'Signal'] = -1  # Sell when normal
+    
+    # Fetch TLT price data (20+ Year Treasury Bonds) or selected ETF
+    if selected_etf == 'TLT':
+        tlt_data = fetch_tlt_data(start_date, end_date)
+    else:
+        tlt_data = fetch_yahoo_data(selected_etf, start_date, end_date)
+    
+    if tlt_data.empty:
+        st.error(f"Could not fetch {selected_etf} price data for backtesting")
+        return None, None, None
+    
+    # Remove timezone information from TLT data (already done in fetch functions)
+    # Calculate daily returns for TLT
+    tlt_df = pd.DataFrame(tlt_data)
+    tlt_df.columns = ['Price']
+    tlt_df['Returns'] = tlt_df['Price'].pct_change()
+    
+    # Align signals with TLT data
+    # Shift signal by 1 to avoid look-ahead bias (use today's signal for tomorrow's trade)
+    common_index = data.index.intersection(tlt_df.index)
+    signals_aligned = data['Signal'].reindex(common_index)
+    returns_aligned = tlt_df['Returns'].reindex(common_index)
+    
+    # Strategy returns: signal shifted by 1 to use today's signal for tomorrow's return
+    strategy_returns = signals_aligned.shift(1) * returns_aligned
+    
+    # Calculate cumulative returns
+    cumulative_returns = (1 + strategy_returns.fillna(0)).cumprod()
+    benchmark_returns = (1 + returns_aligned.fillna(0)).cumprod()
+    
+    # Calculate performance metrics
+    performance_metrics = calculate_backtest_performance_metrics(strategy_returns, returns_aligned, cumulative_returns, benchmark_returns)
+    
+    backtest_results = {
+        'strategy_returns': strategy_returns,
+        'cumulative_returns': cumulative_returns,
+        'benchmark_returns': benchmark_returns,
+        'signals': signals_aligned,
+        'metrics': performance_metrics,
+        'tlt_prices': tlt_df['Price'],
+        'spread_data': data['10Y-3M Spread'].reindex(common_index),
+        'signal_data': signals_aligned
+    }
+    
+    return backtest_results, data, tlt_df
+
+def calculate_backtest_performance_metrics(strategy_returns, benchmark_returns, cumulative_strategy, cumulative_benchmark):
+    """
+    Calculate comprehensive performance metrics for the backtest
+    """
+    if strategy_returns.empty or strategy_returns.dropna().empty:
+        return {}
+    
+    # Remove NaN values for calculations
+    strategy_clean = strategy_returns.dropna()
+    benchmark_clean = benchmark_returns.dropna()
+    
+    if len(strategy_clean) == 0:
+        return {}
+    
+    # Annualization factor (252 trading days per year)
+    ann_factor = np.sqrt(252)
+    
+    # Calculate metrics
+    total_return_strategy = float(cumulative_strategy.iloc[-1] - 1) if len(cumulative_strategy) > 0 else 0
+    total_return_benchmark = float(cumulative_benchmark.iloc[-1] - 1) if len(cumulative_benchmark) > 0 else 0
+    
+    # Sharpe Ratio (assuming risk-free rate = 0 for simplicity)
+    sharpe_strategy = (strategy_clean.mean() / strategy_clean.std()) * ann_factor if strategy_clean.std() > 0 else 0
+    sharpe_benchmark = (benchmark_clean.mean() / benchmark_clean.std()) * ann_factor if benchmark_clean.std() > 0 else 0
+    
+    # Maximum Drawdown
+    max_drawdown_strategy = calculate_max_drawdown(cumulative_strategy)
+    max_drawdown_benchmark = calculate_max_drawdown(cumulative_benchmark)
+    
+    # Win Rate
+    positive_returns = (strategy_clean > 0).sum()
+    total_trades = len(strategy_clean[strategy_clean != 0])
+    win_rate = positive_returns / total_trades if total_trades > 0 else 0
+    
+    # Profit Factor
+    gross_profits = strategy_clean[strategy_clean > 0].sum()
+    gross_losses = abs(strategy_clean[strategy_clean < 0].sum())
+    profit_factor = gross_profits / gross_losses if gross_losses > 0 else 0
+    
+    # Volatility
+    volatility = strategy_clean.std() * ann_factor
+    
+    # Calmar Ratio
+    calmar_ratio = (total_return_strategy / abs(max_drawdown_strategy)) if max_drawdown_strategy != 0 else 0
+    
+    # Average Return per Trade
+    avg_return_per_trade = strategy_clean[strategy_clean != 0].mean() if len(strategy_clean[strategy_clean != 0]) > 0 else 0
+    
+    metrics = {
+        'Total Return Strategy': total_return_strategy,
+        'Total Return Benchmark': total_return_benchmark,
+        'Excess Return': total_return_strategy - total_return_benchmark,
+        'Sharpe Ratio Strategy': sharpe_strategy,
+        'Sharpe Ratio Benchmark': sharpe_benchmark,
+        'Max Drawdown Strategy': max_drawdown_strategy,
+        'Max Drawdown Benchmark': max_drawdown_benchmark,
+        'Win Rate': win_rate,
+        'Profit Factor': profit_factor,
+        'Volatility (Annualized)': volatility,
+        'Calmar Ratio': calmar_ratio,
+        'Average Return per Trade': avg_return_per_trade,
+        'Number of Trades': total_trades
+    }
+    
+    return metrics
+
+def calculate_max_drawdown(cumulative_returns):
+    """Calculate maximum drawdown from cumulative returns series"""
+    if cumulative_returns.empty or len(cumulative_returns) == 0:
+        return 0
+    
+    cumulative_clean = cumulative_returns.fillna(1)
+    rolling_max = cumulative_clean.expanding().max()
+    drawdown = (cumulative_clean - rolling_max) / rolling_max
+    return float(drawdown.min())
+
+def plot_cumulative_returns(backtest_results):
+    """
+    Plot cumulative returns of the yield spread strategy
+    
+    This function creates a visualization showing the cumulative returns of the 
+    trading strategy compared to a simple buy-and-hold approach.
+    """
+    if backtest_results is None:
+        return None
+    
+    fig = go.Figure()
+    
+    # Add strategy cumulative returns
+    fig.add_trace(go.Scatter(
+        x=backtest_results['cumulative_returns'].index,
+        y=backtest_results['cumulative_returns'].values,
+        mode='lines',
+        name='Yield Spread Strategy',
+        line=dict(color='#2c5f8a', width=2.5)
+    ))
+    
+    # Add benchmark cumulative returns (buy and hold)
+    fig.add_trace(go.Scatter(
+        x=backtest_results['benchmark_returns'].index,
+        y=backtest_results['benchmark_returns'].values,
+        mode='lines',
+        name='Buy & Hold (TLT)',
+        line=dict(color='#c17f3a', width=2, dash='dash')
+    ))
+    
+    fig.update_layout(
+        title='Cumulative Returns of Yield Spread Strategy vs Buy & Hold',
+        xaxis_title='Date',
+        yaxis_title='Cumulative Returns',
+        template='plotly_white',
+        height=500,
+        showlegend=True,
+        hovermode='x unified'
+    )
+    
+    return fig
+
+def plot_strategy_performance_dashboard(backtest_results):
+    """
+    Create a comprehensive performance dashboard for the strategy
+    """
+    if backtest_results is None:
+        return None
+    
+    fig = make_subplots(
+        rows=3, cols=2,
+        subplot_titles=(
+            'Cumulative Returns', 'Drawdown Analysis',
+            'Trading Signals', 'Signal Distribution',
+            'Monthly Returns Heatmap', 'Rolling Sharpe Ratio'
+        ),
+        vertical_spacing=0.12,
+        horizontal_spacing=0.15
+    )
+    
+    # 1. Cumulative Returns
+    fig.add_trace(go.Scatter(
+        x=backtest_results['cumulative_returns'].index,
+        y=backtest_results['cumulative_returns'].values,
+        mode='lines',
+        name='Strategy',
+        line=dict(color='#2c5f8a', width=2)
+    ), row=1, col=1)
+    
+    fig.add_trace(go.Scatter(
+        x=backtest_results['benchmark_returns'].index,
+        y=backtest_results['benchmark_returns'].values,
+        mode='lines',
+        name='Buy & Hold',
+        line=dict(color='#c17f3a', width=2, dash='dash')
+    ), row=1, col=1)
+    
+    # 2. Drawdown Analysis
+    strategy_dd = calculate_drawdown_series(backtest_results['cumulative_returns'])
+    fig.add_trace(go.Scatter(
+        x=strategy_dd.index,
+        y=strategy_dd.values * 100,
+        mode='lines',
+        name='Drawdown',
+        line=dict(color='red', width=2),
+        fill='tozeroy',
+        fillcolor='rgba(255, 0, 0, 0.2)'
+    ), row=1, col=2)
+    
+    # 3. Trading Signals
+    fig.add_trace(go.Scatter(
+        x=backtest_results['signal_data'].index,
+        y=backtest_results['signal_data'].values,
+        mode='lines',
+        name='Signal',
+        line=dict(color='#2c5f8a', width=1.5)
+    ), row=2, col=1)
+    
+    fig.add_hline(y=1, line_dash='dash', line_color='green', row=2, col=1)
+    fig.add_hline(y=-1, line_dash='dash', line_color='red', row=2, col=1)
+    
+    # 4. Signal Distribution
+    signal_counts = backtest_results['signal_data'].value_counts()
+    colors = ['green' if x == 1 else 'red' if x == -1 else 'gray' for x in signal_counts.index]
+    fig.add_trace(go.Bar(
+        x=signal_counts.index.astype(str),
+        y=signal_counts.values,
+        name='Signal Count',
+        marker_color=colors
+    ), row=2, col=2)
+    
+    # 5. Monthly Returns Heatmap
+    monthly_returns = calculate_monthly_returns(backtest_results['strategy_returns'])
+    if monthly_returns is not None and not monthly_returns.empty:
+        fig.add_trace(go.Heatmap(
+            z=monthly_returns.values,
+            x=monthly_returns.columns,
+            y=monthly_returns.index,
+            colorscale='RdYlGn',
+            zmid=0,
+            name='Monthly Returns',
+            showscale=True
+        ), row=3, col=1)
+    
+    # 6. Rolling Sharpe Ratio
+    rolling_sharpe = calculate_rolling_sharpe(backtest_results['strategy_returns'], window=63)
+    fig.add_trace(go.Scatter(
+        x=rolling_sharpe.index,
+        y=rolling_sharpe.values,
+        mode='lines',
+        name='Rolling Sharpe',
+        line=dict(color='#4a7c59', width=2)
+    ), row=3, col=2)
+    
+    fig.add_hline(y=0, line_dash='dash', line_color='gray', row=3, col=2)
+    fig.add_hline(y=1, line_dash='dash', line_color='green', row=3, col=2)
+    
+    fig.update_layout(
+        title='Strategy Performance Dashboard',
+        height=1000,
+        showlegend=True,
+        template='plotly_white'
+    )
+    
+    return fig
+
+def calculate_drawdown_series(cumulative_returns):
+    """Calculate drawdown series from cumulative returns"""
+    if cumulative_returns.empty:
+        return pd.Series(dtype=float)
+    
+    cumulative_clean = cumulative_returns.fillna(1)
+    rolling_max = cumulative_clean.expanding().max()
+    drawdown = (cumulative_clean - rolling_max) / rolling_max
+    return drawdown
+
+def calculate_monthly_returns(strategy_returns):
+    """Calculate monthly returns for heatmap visualization"""
+    if strategy_returns.empty:
+        return None
+    
+    monthly_returns = strategy_returns.resample('M').apply(lambda x: (1 + x).prod() - 1)
+    monthly_returns.index = monthly_returns.index.to_period('M')
+    
+    # Create pivot table for heatmap
+    pivot_table = pd.pivot_table(
+        pd.DataFrame({'Returns': monthly_returns, 'Year': monthly_returns.index.year, 'Month': monthly_returns.index.month}),
+        values='Returns',
+        index='Year',
+        columns='Month'
+    ) * 100  # Convert to percentage
+    
+    return pivot_table
+
+def calculate_rolling_sharpe(returns, window=63):
+    """Calculate rolling Sharpe ratio"""
+    if returns.empty or len(returns) < window:
+        return pd.Series(dtype=float)
+    
+    ann_factor = np.sqrt(252)
+    rolling_sharpe = returns.rolling(window).apply(
+        lambda x: (x.mean() / x.std()) * ann_factor if x.std() > 0 else 0
+    )
+    
+    return rolling_sharpe
+
+# =============================================================================
 # NELSON-SIEGEL MODEL (PARAMETRIC CURVE MODELING)
 # =============================================================================
 
@@ -555,7 +1011,7 @@ class MLForecastModel:
         return {'rmse': rmse, 'mae': mae, 'r2': r2, 'feature_importance': importance}
 
 # =============================================================================
-# BACKTEST ENGINE
+# BACKTEST ENGINE (ADVANCED STRATEGIES)
 # =============================================================================
 
 class BacktestEngine:
@@ -973,6 +1429,8 @@ with st.sidebar:
         show_yield_curve = show_spreads = show_ns_model = show_pca = True
         show_monte_carlo = show_ml = show_backtest = True
         show_volatility = show_correlation = show_technical = show_scenarios = True
+        show_yield_spread_strategy = True
+        show_strategy_backtest = True
     else:
         show_yield_curve = st.checkbox("Yield Curve Analysis", value=True)
         show_spreads = st.checkbox("Spread Analysis", value=True)
@@ -980,20 +1438,27 @@ with st.sidebar:
         show_pca = st.checkbox("PCA Risk Analysis", value=True)
         show_monte_carlo = st.checkbox("Monte Carlo Simulation", value=True)
         show_ml = st.checkbox("Machine Learning Forecast", value=True)
-        show_backtest = st.checkbox("Strategy Backtest", value=True)
+        show_backtest = st.checkbox("Advanced Strategy Backtest", value=True)
         show_volatility = st.checkbox("Volatility Analysis", value=True)
         show_correlation = st.checkbox("Correlation Analysis", value=True)
         show_technical = st.checkbox("Technical Analysis", value=True)
         show_scenarios = st.checkbox("Scenario Analysis", value=True)
+        show_yield_spread_strategy = st.checkbox("Yield Spread Trading Strategy (Step 5)", value=True)
+        show_strategy_backtest = st.checkbox("Strategy Backtest with TLT (Step 6)", value=True)
     
     st.markdown("---")
     
     # Backtest parameters
     if show_backtest:
-        st.header("🎯 Strategy Parameters")
+        st.header("🎯 Advanced Strategy Parameters")
         selected_etf = st.selectbox("Backtest ETF", list(BOND_ETFS.keys()))
         strategy_type = st.selectbox("Strategy Type", ['Curve Inversion', 'Momentum', 'Mean Reversion'])
         transaction_cost = st.slider("Transaction Cost (%)", 0.0, 0.5, 0.1, 0.01) / 100
+    
+    # Yield Spread Strategy parameters
+    if show_strategy_backtest:
+        st.header("📈 Yield Spread Strategy Parameters")
+        selected_tlt_etf = st.selectbox("Select ETF for Yield Spread Strategy", ['TLT', 'IEF', 'SHY', 'BND'], index=0)
     
     # Monte Carlo parameters
     if show_monte_carlo:
@@ -1049,6 +1514,16 @@ if run_analysis:
         current_spread = spreads['2s10s'].iloc[-1] if '2s10s' in spreads.columns else np.nan
         recession_prob = get_recession_probability(spreads)
         
+        # Step 5: Yield Spread Trading Strategy
+        strategy_data, full_strategy_data = develop_yield_spread_trading_strategy(yield_df)
+        
+        # Step 6: Backtest the Strategy with TLT
+        backtest_results = None
+        if show_strategy_backtest:
+            backtest_results, backtest_data, tlt_data = backtest_yield_spread_strategy(
+                yield_df, start_date, end_date, selected_tlt_etf
+            )
+        
         # Nelson-Siegel model
         maturities = np.array([0.25, 2, 5, 10, 30])
         current_yields = np.array([yield_df[m].iloc[-1] for m in ['3M', '2Y', '5Y', '10Y', '30Y']])
@@ -1089,12 +1564,16 @@ if run_analysis:
         if current_spread < 0:
             st.warning("⚠️ **YIELD CURVE IS INVERTED!** Historically signals recession within 6-18 months. Defensive positioning recommended.")
         
-        # Tabs
+        # Tabs - Including new tabs for Step 5 and Step 6
         tabs = []
         if show_yield_curve:
             tabs.append("📈 Yield Curve")
         if show_spreads:
             tabs.append("📊 Spread Analysis")
+        if show_yield_spread_strategy:
+            tabs.append("🎯 Yield Spread Strategy (Step 5)")
+        if show_strategy_backtest:
+            tabs.append("💰 Strategy Backtest (Step 6)")
         if show_ns_model:
             tabs.append("📐 Nelson-Siegel")
         if show_pca:
@@ -1104,7 +1583,7 @@ if run_analysis:
         if show_ml:
             tabs.append("🤖 ML Forecast")
         if show_backtest:
-            tabs.append("🎯 Backtest")
+            tabs.append("🎯 Advanced Backtest")
         if show_volatility:
             tabs.append("⚡ Volatility")
         if show_correlation:
@@ -1168,14 +1647,150 @@ if run_analysis:
                         else:
                             st.info("No forward rate data available")
                     
-                    # Spread statistics
                     with st.expander("Spread Statistics"):
                         st.dataframe(spreads.describe().round(2), use_container_width=True)
                 else:
                     st.info("No spread data available")
             tab_idx += 1
         
-        # TAB 3: Nelson-Siegel Model
+        # TAB 3: Yield Spread Trading Strategy (STEP 5)
+        if show_yield_spread_strategy:
+            with main_tabs[tab_idx]:
+                st.subheader("Step 5: Developing a Simple Yield Curve Trading Strategy")
+                
+                st.markdown("""
+                ### One basic fixed-income trading strategy based on the yield curve is to buy long-term bonds 
+                when the yield curve is inverted (indicating an economic downturn) and sell when the curve 
+                is normal (indicating growth).
+                
+                **Strategy Logic:**
+                - **BUY Signal (1)**: When 10Y-3M Spread < 0 (Inverted Yield Curve)
+                - **SELL Signal (-1)**: When 10Y-3M Spread > 0 (Normal Curve)
+                - **NEUTRAL (0)**: When Spread = 0
+                """)
+                
+                if strategy_data is not None and not strategy_data.empty:
+                    # Display signals table
+                    st.markdown("### Trading Signals (Last 10 Days)")
+                    display_df = display_signals_table(strategy_data, 10)
+                    if display_df is not None:
+                        st.dataframe(display_df, use_container_width=True)
+                    
+                    # Plot trading signals
+                    st.markdown("### Trading Signals Visualization")
+                    fig_signals = plot_trading_signals(strategy_data)
+                    if fig_signals:
+                        st.plotly_chart(fig_signals, use_container_width=True)
+                    
+                    # Display full signal history in expander
+                    with st.expander("View Complete Signal History"):
+                        st.dataframe(strategy_data, use_container_width=True)
+                    
+                    # Strategy explanation
+                    st.markdown("""
+                    ### Strategy Interpretation
+                    
+                    The trading strategy generates a **BUY signal** when the yield curve is inverted (negative spread) 
+                    and a **SELL signal** when the curve normalizes (positive spread).
+                    
+                    The signal is plotted over time to help visualize trading opportunities.
+                    """)
+                else:
+                    st.warning("Insufficient data to generate trading strategy signals. Please check date range.")
+            tab_idx += 1
+        
+        # TAB 4: Strategy Backtest with TLT (STEP 6)
+        if show_strategy_backtest:
+            with main_tabs[tab_idx]:
+                st.subheader("Step 6: Backtesting the Strategy with TLT")
+                
+                st.markdown("""
+                ### Backtesting the Yield Spread Strategy
+                
+                To evaluate the performance of this strategy, we backtest it using bond prices or 
+                Total Return Bond ETFs like **TLT (20+ Year Treasury Bonds)**.
+                
+                This backtest assumes we invest in TLT based on the signal.
+                """)
+                
+                if backtest_results is not None:
+                    # Display performance metrics
+                    st.markdown("### Performance Metrics")
+                    metrics = backtest_results['metrics']
+                    
+                    if metrics:
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Strategy Total Return", f"{metrics.get('Total Return Strategy', 0):.2%}")
+                            st.metric("Sharpe Ratio (Strategy)", f"{metrics.get('Sharpe Ratio Strategy', 0):.2f}")
+                        with col2:
+                            st.metric("Benchmark Total Return", f"{metrics.get('Total Return Benchmark', 0):.2%}")
+                            st.metric("Sharpe Ratio (Benchmark)", f"{metrics.get('Sharpe Ratio Benchmark', 0):.2f}")
+                        with col3:
+                            st.metric("Excess Return", f"{metrics.get('Excess Return', 0):.2%}")
+                            st.metric("Max Drawdown (Strategy)", f"{metrics.get('Max Drawdown Strategy', 0):.2%}")
+                        with col4:
+                            st.metric("Win Rate", f"{metrics.get('Win Rate', 0):.2%}")
+                            st.metric("Profit Factor", f"{metrics.get('Profit Factor', 0):.2f}")
+                        
+                        st.metric("Number of Trades", metrics.get('Number of Trades', 0))
+                        st.metric("Volatility (Annualized)", f"{metrics.get('Volatility (Annualized)', 0):.2%}")
+                        st.metric("Calmar Ratio", f"{metrics.get('Calmar Ratio', 0):.2f}")
+                    
+                    # Plot cumulative returns
+                    st.markdown("### Cumulative Returns")
+                    fig_cumulative = plot_cumulative_returns(backtest_results)
+                    if fig_cumulative:
+                        st.plotly_chart(fig_cumulative, use_container_width=True)
+                    
+                    # Plot comprehensive performance dashboard
+                    st.markdown("### Performance Dashboard")
+                    fig_dashboard = plot_strategy_performance_dashboard(backtest_results)
+                    if fig_dashboard:
+                        st.plotly_chart(fig_dashboard, use_container_width=True)
+                    
+                    # Display signal distribution
+                    st.markdown("### Signal Statistics")
+                    signal_counts = backtest_results['signal_data'].value_counts()
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Buy Signals", signal_counts.get(1, 0))
+                    with col2:
+                        st.metric("Sell Signals", signal_counts.get(-1, 0))
+                    with col3:
+                        st.metric("Neutral Periods", signal_counts.get(0, 0))
+                    
+                    # Display recent signals
+                    with st.expander("View Recent Trading Signals"):
+                        recent_signals = pd.DataFrame({
+                            'Date': backtest_results['signal_data'].tail(20).index.strftime('%Y-%m-%d'),
+                            '10Y-3M Spread (%)': backtest_results['spread_data'].tail(20).values,
+                            'Signal': backtest_results['signal_data'].tail(20).values,
+                            'Action': ['BUY (Inverted)' if x == 1 else 'SELL (Normal)' if x == -1 else 'NEUTRAL' 
+                                      for x in backtest_results['signal_data'].tail(20).values]
+                        })
+                        st.dataframe(recent_signals, use_container_width=True, hide_index=True)
+                    
+                    # Strategy explanation
+                    st.markdown("""
+                    ### Backtest Conclusion
+                    
+                    This backtest demonstrates how profitable the yield spread strategy could be when implemented 
+                    during specific periods. The strategy uses the yield spread between long-term and short-term 
+                    bonds to signal when to buy and sell fixed-income assets, such as U.S. Treasury Bonds.
+                    
+                    **Use Cases:**
+                    - **Portfolio Managers**: Yield curve analysis is critical for bond investors and portfolio managers.
+                    - **Risk Management**: Traders and financial analysts can use this strategy to hedge against 
+                      potential economic downturns.
+                    - **Automation**: This strategy can be automated using Python to monitor yield spreads and 
+                      generate real-time trading signals.
+                    """)
+                else:
+                    st.warning("Backtest results not available. Please check date range and try again.")
+            tab_idx += 1
+        
+        # TAB 5: Nelson-Siegel Model
         if show_ns_model and ns_result:
             with main_tabs[tab_idx]:
                 st.subheader("Nelson-Siegel Parametric Curve Model")
@@ -1203,7 +1818,7 @@ if run_analysis:
                     st.plotly_chart(fig_ns, use_container_width=True)
             tab_idx += 1
         
-        # TAB 4: PCA & Factors
+        # TAB 6: PCA & Factors
         if show_pca:
             with main_tabs[tab_idx]:
                 st.subheader("Factor Analysis & PCA")
@@ -1233,7 +1848,7 @@ if run_analysis:
                         st.dataframe(pca_result['loadings'].round(3), use_container_width=True)
             tab_idx += 1
         
-        # TAB 5: Monte Carlo
+        # TAB 7: Monte Carlo
         if show_monte_carlo:
             with main_tabs[tab_idx]:
                 st.subheader("Monte Carlo Simulation")
@@ -1270,7 +1885,6 @@ if run_analysis:
                                             yaxis_title='Yield (%)', template='plotly_white', height=500)
                         st.plotly_chart(fig_mc, use_container_width=True)
                         
-                        # Distribution plot
                         fig_dist = go.Figure(data=go.Histogram(x=paths[:, -1], nbinsx=50, 
                                                               marker_color='#2c5f8a', opacity=0.7))
                         fig_dist.add_vline(x=sim_results['mean'][-1], line_color='red', line_dash='dash',
@@ -1280,7 +1894,7 @@ if run_analysis:
                         st.plotly_chart(fig_dist, use_container_width=True)
             tab_idx += 1
         
-        # TAB 6: ML Forecast
+        # TAB 8: ML Forecast
         if show_ml:
             with main_tabs[tab_idx]:
                 st.subheader(f"Machine Learning Forecast - {ml_model_type}")
@@ -1309,62 +1923,60 @@ if run_analysis:
                             st.warning(f"Insufficient data. Need at least 50 samples, have {len(X) if X is not None else 0}")
             tab_idx += 1
         
-        # TAB 7: Backtest
+        # TAB 9: Advanced Backtest
         if show_backtest:
             with main_tabs[tab_idx]:
-                st.subheader(f"Strategy Backtest: {strategy_type} on {selected_etf}")
+                st.subheader(f"Advanced Strategy Backtest: {strategy_type} on {selected_etf}")
                 
                 etf_data = fetch_yahoo_data(selected_etf, start_date, end_date)
                 
                 if not etf_data.empty:
                     etf_returns = etf_data.pct_change()
-                    backtest_result = BacktestEngine.backtest_strategy(yield_df, spreads, etf_returns, strategy_type)
+                    backtest_result_adv = BacktestEngine.backtest_strategy(yield_df, spreads, etf_returns, strategy_type)
                     
-                    if backtest_result:
-                        metrics = backtest_result['metrics']
+                    if backtest_result_adv:
+                        metrics_adv = backtest_result_adv['metrics']
                         
                         col1, col2, col3, col4 = st.columns(4)
                         with col1:
-                            st.metric("Strategy Return", f"{metrics['Total Return Strategy']:.2%}")
-                            st.metric("Sharpe Ratio", f"{metrics['Sharpe Ratio']:.2f}")
+                            st.metric("Strategy Return", f"{metrics_adv.get('Total Return Strategy', 0):.2%}")
+                            st.metric("Sharpe Ratio", f"{metrics_adv.get('Sharpe Ratio', 0):.2f}")
                         with col2:
-                            st.metric("Benchmark Return", f"{metrics['Total Return Benchmark']:.2%}")
-                            st.metric("Volatility", f"{metrics['Volatility']:.2%}")
+                            st.metric("Benchmark Return", f"{metrics_adv.get('Total Return Benchmark', 0):.2%}")
+                            st.metric("Volatility", f"{metrics_adv.get('Volatility', 0):.2%}")
                         with col3:
-                            st.metric("Excess Return", f"{metrics['Excess Return']:.2%}")
-                            st.metric("Max Drawdown", f"{metrics['Max Drawdown']:.2%}")
+                            st.metric("Excess Return", f"{metrics_adv.get('Excess Return', 0):.2%}")
+                            st.metric("Max Drawdown", f"{metrics_adv.get('Max Drawdown', 0):.2%}")
                         with col4:
-                            st.metric("Win Rate", f"{metrics['Win Rate']:.2%}")
-                            st.metric("Profit Factor", f"{metrics['Profit Factor']:.2f}")
+                            st.metric("Win Rate", f"{metrics_adv.get('Win Rate', 0):.2%}")
+                            st.metric("Profit Factor", f"{metrics_adv.get('Profit Factor', 0):.2f}")
                         
-                        fig_backtest = go.Figure()
-                        fig_backtest.add_trace(go.Scatter(x=backtest_result['cumulative_strategy'].index, 
-                                                          y=backtest_result['cumulative_strategy'].values,
-                                                          name='Strategy', line=dict(color='#2c5f8a', width=2)))
-                        fig_backtest.add_trace(go.Scatter(x=backtest_result['cumulative_benchmark'].index, 
-                                                          y=backtest_result['cumulative_benchmark'].values,
-                                                          name='Benchmark', line=dict(color='#c17f3a', width=2, dash='dash')))
-                        fig_backtest.update_layout(title='Cumulative Returns', xaxis_title='Date', 
-                                                  yaxis_title='Return', template='plotly_white', height=400)
-                        st.plotly_chart(fig_backtest, use_container_width=True)
+                        fig_backtest_adv = go.Figure()
+                        fig_backtest_adv.add_trace(go.Scatter(x=backtest_result_adv['cumulative_strategy'].index, 
+                                                              y=backtest_result_adv['cumulative_strategy'].values,
+                                                              name='Strategy', line=dict(color='#2c5f8a', width=2)))
+                        fig_backtest_adv.add_trace(go.Scatter(x=backtest_result_adv['cumulative_benchmark'].index, 
+                                                              y=backtest_result_adv['cumulative_benchmark'].values,
+                                                              name='Benchmark', line=dict(color='#c17f3a', width=2, dash='dash')))
+                        fig_backtest_adv.update_layout(title='Cumulative Returns', xaxis_title='Date', 
+                                                      yaxis_title='Return', template='plotly_white', height=400)
+                        st.plotly_chart(fig_backtest_adv, use_container_width=True)
                         
-                        # Signal distribution
-                        st.markdown("### Signal Distribution")
-                        signal_counts = backtest_result['signals'].value_counts()
+                        signal_counts_adv = backtest_result_adv['signals'].value_counts()
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            st.metric("Buy Signals", signal_counts.get(1, 0))
+                            st.metric("Buy Signals", signal_counts_adv.get(1, 0))
                         with col2:
-                            st.metric("Sell Signals", signal_counts.get(0, 0))
+                            st.metric("Sell Signals", signal_counts_adv.get(0, 0))
                         with col3:
-                            st.metric("Hold Periods", signal_counts.get(-1, 0))
+                            st.metric("Hold Periods", signal_counts_adv.get(-1, 0))
                     else:
                         st.warning("Backtest failed. Try different parameters.")
                 else:
                     st.error(f"Could not fetch {selected_etf} data")
             tab_idx += 1
         
-        # TAB 8: Volatility
+        # TAB 10: Volatility
         if show_volatility:
             with main_tabs[tab_idx]:
                 st.subheader("Volatility Analysis")
@@ -1391,7 +2003,7 @@ if run_analysis:
                     st.info("Volatility data not available")
             tab_idx += 1
         
-        # TAB 9: Correlation
+        # TAB 11: Correlation
         if show_correlation:
             with main_tabs[tab_idx]:
                 st.subheader("Correlation Analysis")
@@ -1412,7 +2024,7 @@ if run_analysis:
                     st.info("Correlation data not available")
             tab_idx += 1
         
-        # TAB 10: Technical Analysis
+        # TAB 12: Technical Analysis
         if show_technical:
             with main_tabs[tab_idx]:
                 st.subheader("Technical Analysis")
@@ -1427,7 +2039,6 @@ if run_analysis:
                     if fig_tech:
                         st.plotly_chart(fig_tech, use_container_width=True)
                     
-                    # Current technical signals
                     st.subheader("Current Technical Signals")
                     latest = tech_df.iloc[-1]
                     
@@ -1452,7 +2063,7 @@ if run_analysis:
                     st.error(f"Could not fetch {tech_ticker} data")
             tab_idx += 1
         
-        # TAB 11: Scenarios
+        # TAB 13: Scenarios
         if show_scenarios:
             with main_tabs[tab_idx]:
                 st.subheader("Scenario Analysis")
@@ -1501,21 +2112,23 @@ else:
         st.markdown("""
         ### 🚀 Complete Feature Suite
         
-        This institutional-grade platform includes **11 comprehensive analysis modules**:
+        This institutional-grade platform includes **13 comprehensive analysis modules**:
         
         | # | Module | Description |
         |---|--------|-------------|
         | 1 | **Yield Curve Analysis** | Interactive curve visualization, historical comparison |
         | 2 | **Spread Analysis** | 2s10s, 3m10y, 5s30s spreads, forward rates |
-        | 3 | **Nelson-Siegel Model** | Parametric yield curve modeling |
-        | 4 | **PCA & Factor Analysis** | Level, Slope, Curvature factors |
-        | 5 | **Monte Carlo Simulation** | GBM stochastic simulation, VaR calculation |
-        | 6 | **Machine Learning Forecast** | Random Forest, Gradient Boosting predictions |
-        | 7 | **Strategy Backtest** | Curve Inversion, Momentum, Mean Reversion |
-        | 8 | **Volatility Analysis** | VIX analysis, volatility regime detection |
-        | 9 | **Correlation Analysis** | Cross-asset correlation matrix |
-        | 10 | **Technical Analysis** | RSI, MACD, Bollinger Bands, moving averages |
-        | 11 | **Scenario Analysis** | Bull/Bear, Recession, Inflation scenarios |
+        | 3 | **Yield Spread Trading Strategy (Step 5)** | Simple strategy based on 10Y-3M spread |
+        | 4 | **Strategy Backtest with TLT (Step 6)** | Backtest using TLT ETF, comprehensive metrics |
+        | 5 | **Nelson-Siegel Model** | Parametric yield curve modeling |
+        | 6 | **PCA & Factor Analysis** | Level, Slope, Curvature factors |
+        | 7 | **Monte Carlo Simulation** | GBM stochastic simulation, VaR calculation |
+        | 8 | **Machine Learning Forecast** | Random Forest, Gradient Boosting predictions |
+        | 9 | **Advanced Strategy Backtest** | Curve Inversion, Momentum, Mean Reversion |
+        | 10 | **Volatility Analysis** | VIX analysis, volatility regime detection |
+        | 11 | **Correlation Analysis** | Cross-asset correlation matrix |
+        | 12 | **Technical Analysis** | RSI, MACD, Bollinger Bands, moving averages |
+        | 13 | **Scenario Analysis** | Bull/Bear, Recession, Inflation scenarios |
         
         ### 📊 Data Source
         - **FRED API**: Federal Reserve Economic Data (Official)
