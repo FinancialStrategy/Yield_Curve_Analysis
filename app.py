@@ -36,61 +36,32 @@ st.set_page_config(
 )
 
 COLORS = {
-    "bg": "#eef2f7",
-    "bg2": "#f7f9fc",
-    "surface": "#ffffff",
-    "surface_alt": "#f5f7fb",
-    "header": "#1a2a3a",
-    "grid": "#c8d4e0",
-    "grid_dark": "#97a8b8",
-    "text": "#1a2a3a",
-    "text_secondary": "#4a5a6a",
-    "muted": "#667085",
-    "accent": "#2c5f8a",
-    "accent2": "#4a7c59",
-    "accent3": "#c17f3a",
-    "positive": "#2f855a",
-    "negative": "#c05656",
-    "warning": "#d48924",
-    "recession": "rgba(120, 130, 145, 0.18)",
-    "band": "rgba(108, 142, 173, 0.10)",
+    "bg": "#eef2f7", "bg2": "#f7f9fc", "surface": "#ffffff", "surface_alt": "#f5f7fb",
+    "header": "#1a2a3a", "grid": "#c8d4e0", "grid_dark": "#97a8b8",
+    "text": "#1a2a3a", "text_secondary": "#4a5a6a", "muted": "#667085",
+    "accent": "#2c5f8a", "accent2": "#4a7c59", "accent3": "#c17f3a",
+    "positive": "#2f855a", "negative": "#c05656", "warning": "#d48924",
+    "recession": "rgba(120, 130, 145, 0.18)", "band": "rgba(108, 142, 173, 0.10)",
 }
 
-st.markdown(
-    """
-    <style>
-    .stApp { background: linear-gradient(135deg, #eef2f7 0%, #f7f9fc 100%); }
-    .main-title-card {
-        background: linear-gradient(135deg, #1a2a3a 0%, #2c4a6e 100%);
-        border-radius: 20px; padding: 1.5rem 1.8rem; margin-bottom: 1.5rem;
-    }
-    .main-title { color: white; font-weight: 800; font-size: 1.65rem; margin: 0; }
-    .main-subtitle { color: rgba(255,255,255,0.86); font-size: 0.86rem; margin-top: 0.55rem; }
-    .metric-card {
-        background: white; border: 1px solid #c8d4e0; border-radius: 16px;
-        padding: 1rem; min-height: 118px; box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-    }
-    .metric-label { color: #4a5a6a; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
-    .metric-value { color: #1a2a3a; font-size: 1.55rem; font-weight: 800; font-family: monospace; }
-    .metric-sub { color: #667085; font-size: 0.75rem; margin-top: 0.35rem; }
-    .note-box {
-        background: #f5f7fb; border: 1px solid #c8d4e0; border-left: 4px solid #2c5f8a;
-        border-radius: 12px; padding: 1rem 1.2rem; font-size: 0.88rem; margin: 1rem 0;
-    }
-    .warning-box {
-        background: #fff8f0; border: 1px solid #f0d8b0; border-left: 4px solid #d48924;
-        border-radius: 12px; padding: 1rem 1.2rem;
-    }
-    .stTabs [data-baseweb="tab-list"] { gap: 0; border-bottom: 2px solid #c8d4e0; flex-wrap: wrap; }
-    .stTabs [data-baseweb="tab"] { color: #4a5a6a; font-weight: 700; font-size: 0.74rem; padding: 8px 14px; }
-    .stTabs [aria-selected="true"] { color: #2c5f8a; border-bottom: 3px solid #2c5f8a; }
-    .stButton>button { background: white; border: 1px solid #c8d4e0; border-radius: 10px; font-weight: 700; }
-    .stButton>button:hover { border-color: #2c5f8a; color: #2c5f8a; }
-    #MainMenu, header, footer { visibility: hidden; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<style>
+.stApp { background: linear-gradient(135deg, #eef2f7 0%, #f7f9fc 100%); }
+.main-title-card { background: linear-gradient(135deg, #1a2a3a 0%, #2c4a6e 100%); border-radius: 20px; padding: 1.5rem 1.8rem; margin-bottom: 1.5rem; }
+.main-title { color: white; font-weight: 800; font-size: 1.65rem; margin: 0; }
+.main-subtitle { color: rgba(255,255,255,0.86); font-size: 0.86rem; margin-top: 0.55rem; }
+.metric-card { background: white; border: 1px solid #c8d4e0; border-radius: 16px; padding: 1rem; min-height: 118px; }
+.metric-label { color: #4a5a6a; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
+.metric-value { color: #1a2a3a; font-size: 1.55rem; font-weight: 800; font-family: monospace; }
+.metric-sub { color: #667085; font-size: 0.75rem; margin-top: 0.35rem; }
+.note-box { background: #f5f7fb; border: 1px solid #c8d4e0; border-left: 4px solid #2c5f8a; border-radius: 12px; padding: 1rem 1.2rem; margin: 1rem 0; }
+.stTabs [data-baseweb="tab-list"] { gap: 0; border-bottom: 2px solid #c8d4e0; flex-wrap: wrap; }
+.stTabs [data-baseweb="tab"] { color: #4a5a6a; font-weight: 700; font-size: 0.74rem; padding: 8px 14px; }
+.stTabs [aria-selected="true"] { color: #2c5f8a; border-bottom: 3px solid #2c5f8a; }
+.stButton>button { background: white; border: 1px solid #c8d4e0; border-radius: 10px; font-weight: 700; }
+.stButton>button:hover { border-color: #2c5f8a; color: #2c5f8a; }
+#MainMenu, header, footer { visibility: hidden; }
+</style>""", unsafe_allow_html=True)
 
 FRED_SERIES = {
     "1M": "DGS1MO", "3M": "DGS3MO", "6M": "DGS6MO",
@@ -208,14 +179,12 @@ def fetch_market_bundle():
         if s is not None:
             vol_dict[t] = s
     vol_df = pd.DataFrame(vol_dict).dropna() if vol_dict else None
-
     corr_dict = {}
     for t, name in CORRELATION_TICKERS.items():
         s = fetch_yahoo_close(t)
         if s is not None:
             corr_dict[name] = s
     corr_df = pd.DataFrame(corr_dict).dropna() if corr_dict else None
-
     ohlc_map = {t: fetch_ohlc_data(t, "2y") for t in YAHOO_TICKERS}
     return vol_df, corr_df, ohlc_map
 
@@ -449,7 +418,7 @@ class VolatilityAnalyzer:
         return {"current": current, "regime": regime}
 
 # =============================================================================
-# PCA & FACTORS
+# PCA & FACTORS - DÜZELTİLDİ
 # =============================================================================
 
 def factor_contributions(df):
@@ -463,157 +432,47 @@ def factor_contributions(df):
     return out
 
 def pca_decomp(df, n=3):
-    returns = df.pct_change().dropna()
-    if len(returns) < 20:
-        return None
-    scaler = StandardScaler()
-    x = scaler.fit_transform(returns)
-    k = min(n, x.shape[1], x.shape[0]-1)
-    pca = PCA(n_components=k)
-    pca.fit(x)
-    return {"explained": pca.explained_variance_ratio_, "loadings": pd.DataFrame(pca.components_.T, columns=[f"PC{i+1}" for i in range(k)], index=returns.columns)}
-
-# =============================================================================
-# GRAFİK FONKSİYONLARI - SADE VE ÇALIŞIR
-# =============================================================================
-
-def plot_curve(maturities, yields, ns_result):
-    """Basit ve çalışan curve grafiği"""
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=maturities, y=yields, mode='lines+markers', name='Actual Curve', line=dict(color='#2c5f8a', width=3), marker=dict(size=10, color='#2c5f8a')))
-    if ns_result:
-        fig.add_trace(go.Scatter(x=maturities, y=ns_result['fitted_values'], mode='lines', name='NS Fit', line=dict(color='#4a7c59', width=2.5, dash='dash')))
-    fig.update_layout(title='Current Treasury Yield Curve', xaxis_title='Maturity (Years)', yaxis_title='Yield (%)', height=500, template='plotly_white')
-    return fig
-
-def plot_spread(spreads, recessions):
-    """Basit ve çalışan spread grafiği"""
-    fig = go.Figure()
-    if "10Y-2Y" in spreads:
-        fig.add_trace(go.Scatter(x=spreads.index, y=spreads['10Y-2Y'], mode='lines', name='10Y-2Y Spread', line=dict(color='#d48924', width=2.5)))
-    fig.add_hline(y=0, line_dash='dash', line_color='red')
-    for r in recessions:
-        fig.add_vrect(x0=r['start'], x1=r['end'], fillcolor='rgba(120,130,145,0.2)', layer='below', line_width=0)
-    fig.update_layout(title='10Y-2Y Spread History', xaxis_title='Date', yaxis_title='Basis Points (bps)', height=450, template='plotly_white')
-    return fig
-
-def plot_yield_history(df, tenor, title):
-    """Basit ve çalışan yield history grafiği"""
-    if tenor not in df:
-        return None
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df[tenor], mode='lines', name=tenor, line=dict(color='#2c5f8a', width=2.5)))
-    fig.update_layout(title=title, xaxis_title='Date', yaxis_title='Yield (%)', height=400, template='plotly_white')
-    return fig
-
-def plot_monte_carlo(initial, results, days):
-    """Basit ve çalışan Monte Carlo grafiği"""
-    fig = go.Figure()
-    x = np.arange(days)
-    fig.add_trace(go.Scatter(x=x, y=results['upper'], fill=None, mode='lines', line=dict(color='rgba(0,0,0,0)'), showlegend=False))
-    fig.add_trace(go.Scatter(x=x, y=results['lower'], fill='tonexty', mode='lines', fillcolor='rgba(44,95,138,0.2)', line=dict(color='rgba(0,0,0,0)'), name='95% CI'))
-    fig.add_trace(go.Scatter(x=x, y=results['mean'], mode='lines', name='Mean Path', line=dict(color='#2c5f8a', width=3)))
-    fig.add_trace(go.Scatter(x=[0], y=[initial], mode='markers', name='Current', marker=dict(size=12, color='#2f855a', symbol='star')))
-    fig.update_layout(title=f'Monte Carlo Simulation - {days} Days', xaxis_title='Trading Days Ahead', yaxis_title='Yield (%)', height=500, template='plotly_white')
-    return fig
-
-def plot_backtest(bt_results):
-    """Basit ve çalışan backtest grafiği"""
-    if not bt_results:
-        return None
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=bt_results['cumulative'].index, y=bt_results['cumulative'].values, mode='lines', name='Strategy', line=dict(color='#2c5f8a', width=2.5)))
-    fig.update_layout(title='Backtest Performance', xaxis_title='Date', yaxis_title='Cumulative Return', height=450, template='plotly_white')
-    return fig
-
-def plot_volatility(vix, regime):
-    """Basit ve çalışan VIX grafiği"""
-    if vix is None or len(vix) == 0:
-        return None
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=vix.index, y=vix.values, mode='lines', name='VIX', line=dict(color='#d48924', width=2.5), fill='tozeroy', fillcolor='rgba(212,137,36,0.1)'))
-    fig.add_hline(y=20, line_dash='dash', line_color='orange')
-    fig.add_hline(y=15, line_dash='dash', line_color='green')
-    fig.update_layout(title=f'VIX Dashboard - Current: {regime["current"]:.1f} ({regime["regime"]})', xaxis_title='Date', yaxis_title='VIX', height=450, template='plotly_white')
-    return fig
-
-def plot_correlation(corr_matrix):
-    """Basit ve çalışan korelasyon heatmap"""
-    if corr_matrix.empty:
-        return None
-    fig = go.Figure(data=go.Heatmap(z=corr_matrix.values, x=corr_matrix.columns, y=corr_matrix.columns, colorscale='RdBu', zmid=0, text=corr_matrix.values.round(2), texttemplate='%{text}'))
-    fig.update_layout(title='Cross-Asset Correlation Matrix', height=500, width=650, template='plotly_white')
-    return fig
-
-def plot_technical(df, ticker):
-    """Basit ve çalışan teknik analiz grafiği"""
+    """PCA decomposition - HATALARI GİDERİLDİ"""
     if df is None or df.empty:
         return None
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.6, 0.4])
-    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Close', line=dict(color='#2c5f8a', width=2.5)), row=1, col=1)
-    if 'RSI' in df:
-        fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], mode='lines', name='RSI', line=dict(color='#4a7c59', width=2)), row=2, col=1)
-        fig.add_hline(y=70, line_dash='dash', line_color='red', row=2, col=1)
-        fig.add_hline(y=30, line_dash='dash', line_color='green', row=2, col=1)
-    fig.update_layout(title=f'Technical Analysis - {ticker}', height=600, template='plotly_white')
-    fig.update_yaxes(title_text='Price', row=1, col=1)
-    fig.update_yaxes(title_text='RSI', row=2, col=1, range=[0,100])
-    return fig
-
-def plot_factor_contributions(factor_df):
-    """Basit ve çalışan factor grafiği"""
-    if factor_df is None or factor_df.empty:
+    
+    # Get returns and clean NaN/inf values
+    returns = df.pct_change()
+    
+    # Replace inf with NaN, then drop NaN
+    returns = returns.replace([np.inf, -np.inf], np.nan)
+    returns = returns.dropna()
+    
+    if len(returns) < 20:
         return None
-    fig = go.Figure()
-    colors = ['#2c5f8a', '#4a7c59', '#d48924', '#c17f3a']
-    for i, col in enumerate(factor_df.columns[:4]):
-        fig.add_trace(go.Scatter(x=factor_df.index, y=factor_df[col], mode='lines', name=col, line=dict(color=colors[i % len(colors)], width=2)))
-    fig.update_layout(title='Factor Contributions', xaxis_title='Date', yaxis_title='Value', height=450, template='plotly_white')
-    return fig
-
-def plot_pca(pca_result):
-    """Basit ve çalışan PCA grafiği"""
-    if pca_result is None:
+    
+    if returns.shape[1] < 2:
         return None
-    fig = go.Figure()
-    ev = pca_result['explained'] * 100
-    fig.add_trace(go.Bar(x=[f'PC{i+1}' for i in range(len(ev))], y=ev, marker_color='#2c5f8a', text=[f'{x:.1f}%' for x in ev], textposition='outside'))
-    fig.update_layout(title='PCA Variance Explained', xaxis_title='Principal Component', yaxis_title='Variance Explained (%)', height=450, template='plotly_white')
-    return fig
-
-def plot_scenario(scenario_df, name):
-    """Basit ve çalışan scenario grafiği"""
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=scenario_df.index, y=scenario_df['Current'], name='Current', marker_color='#2c5f8a'))
-    fig.add_trace(go.Bar(x=scenario_df.index, y=scenario_df['Scenario'], name=name, marker_color='#d48924'))
-    fig.update_layout(title=f'Scenario Analysis - {name}', xaxis_title='Tenor', yaxis_title='Yield (%)', height=450, template='plotly_white', barmode='group')
-    return fig
-
-def plot_dynamic_params(dyn_df):
-    """Basit ve çalışan dynamic parameters grafiği"""
-    if dyn_df is None or dyn_df.empty:
+    
+    try:
+        scaler = StandardScaler()
+        x = scaler.fit_transform(returns)
+        
+        k = min(n, x.shape[1], x.shape[0]-1)
+        if k < 1:
+            return None
+            
+        pca = PCA(n_components=k)
+        pca.fit(x)
+        
+        loadings = pd.DataFrame(
+            pca.components_.T, 
+            columns=[f"PC{i+1}" for i in range(k)], 
+            index=returns.columns
+        )
+        
+        return {
+            "explained": pca.explained_variance_ratio_,
+            "cumulative": np.cumsum(pca.explained_variance_ratio_),
+            "loadings": loadings,
+        }
+    except Exception as e:
         return None
-    fig = make_subplots(rows=2, cols=2, subplot_titles=('β₀ Level', 'β₁ Slope', 'β₂ Curvature', 'RMSE'))
-    fig.add_trace(go.Scatter(x=dyn_df['date'], y=dyn_df['beta0'], mode='lines', name='β₀', line=dict(color='#4a7c59', width=2)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=dyn_df['date'], y=dyn_df['beta1'], mode='lines', name='β₁', line=dict(color='#2c5f8a', width=2)), row=1, col=2)
-    fig.add_trace(go.Scatter(x=dyn_df['date'], y=dyn_df['beta2'], mode='lines', name='β₂', line=dict(color='#d48924', width=2)), row=2, col=1)
-    fig.add_trace(go.Scatter(x=dyn_df['date'], y=dyn_df['rmse']*100, mode='lines', name='RMSE', line=dict(color='#667085', width=2)), row=2, col=2)
-    fig.update_layout(title='Rolling Nelson-Siegel Parameters', height=600, template='plotly_white')
-    return fig
-
-def plot_rate_dynamics(rate_df):
-    """Basit ve çalışan rate dynamics grafiği"""
-    if rate_df is None or rate_df.empty:
-        return None
-    cols = list(rate_df.columns)[:4]
-    fig = make_subplots(rows=2, cols=2, subplot_titles=cols)
-    positions = [(1,1), (1,2), (2,1), (2,2)]
-    colors = ['#2c5f8a', '#4a7c59', '#d48924', '#c17f3a']
-    for i, col in enumerate(cols):
-        r, c = positions[i]
-        fig.add_trace(go.Scatter(x=rate_df.index, y=rate_df[col], mode='lines', name=col, line=dict(color=colors[i], width=2)), row=r, col=c)
-    fig.update_layout(title='Rate Dynamics', height=550, template='plotly_white', showlegend=False)
-    return fig
 
 # =============================================================================
 # SCENARIO ENGINE
@@ -638,6 +497,111 @@ def scenario_engine(df):
         rec[col] = rec[col] - (0.22 if m <= 2 else 0.14 if m <= 10 else 0.10)
     scenarios["Recession Case"] = pd.DataFrame({"Current": latest, "Scenario": rec})
     return scenarios
+
+# =============================================================================
+# GRAFİK FONKSİYONLARI
+# =============================================================================
+
+def plot_curve(maturities, yields, ns_result):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=maturities, y=yields, mode='lines+markers', name='Actual Curve', line=dict(color='#2c5f8a', width=3), marker=dict(size=10, color='#2c5f8a')))
+    if ns_result:
+        fig.add_trace(go.Scatter(x=maturities, y=ns_result['fitted_values'], mode='lines', name='NS Fit', line=dict(color='#4a7c59', width=2.5, dash='dash')))
+    fig.update_layout(title='Current Treasury Yield Curve', xaxis_title='Maturity (Years)', yaxis_title='Yield (%)', height=500, template='plotly_white')
+    return fig
+
+def plot_spread(spreads, recessions):
+    fig = go.Figure()
+    if "10Y-2Y" in spreads:
+        fig.add_trace(go.Scatter(x=spreads.index, y=spreads['10Y-2Y'], mode='lines', name='10Y-2Y Spread', line=dict(color='#d48924', width=2.5)))
+    fig.add_hline(y=0, line_dash='dash', line_color='red')
+    for r in recessions:
+        fig.add_vrect(x0=r['start'], x1=r['end'], fillcolor='rgba(120,130,145,0.2)', layer='below', line_width=0)
+    fig.update_layout(title='10Y-2Y Spread History', xaxis_title='Date', yaxis_title='Basis Points (bps)', height=450, template='plotly_white')
+    return fig
+
+def plot_yield_history(df, tenor, title):
+    if tenor not in df:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df[tenor], mode='lines', name=tenor, line=dict(color='#2c5f8a', width=2.5)))
+    fig.update_layout(title=title, xaxis_title='Date', yaxis_title='Yield (%)', height=400, template='plotly_white')
+    return fig
+
+def plot_monte_carlo(initial, results, days):
+    fig = go.Figure()
+    x = np.arange(days)
+    fig.add_trace(go.Scatter(x=x, y=results['upper'], fill=None, mode='lines', line=dict(color='rgba(0,0,0,0)'), showlegend=False))
+    fig.add_trace(go.Scatter(x=x, y=results['lower'], fill='tonexty', mode='lines', fillcolor='rgba(44,95,138,0.2)', line=dict(color='rgba(0,0,0,0)'), name='95% CI'))
+    fig.add_trace(go.Scatter(x=x, y=results['mean'], mode='lines', name='Mean Path', line=dict(color='#2c5f8a', width=3)))
+    fig.add_trace(go.Scatter(x=[0], y=[initial], mode='markers', name='Current', marker=dict(size=12, color='#2f855a', symbol='star')))
+    fig.update_layout(title=f'Monte Carlo Simulation - {days} Days', xaxis_title='Trading Days Ahead', yaxis_title='Yield (%)', height=500, template='plotly_white')
+    return fig
+
+def plot_backtest(bt_results):
+    if not bt_results:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=bt_results['cumulative'].index, y=bt_results['cumulative'].values, mode='lines', name='Strategy', line=dict(color='#2c5f8a', width=2.5)))
+    fig.update_layout(title='Backtest Performance', xaxis_title='Date', yaxis_title='Cumulative Return', height=450, template='plotly_white')
+    return fig
+
+def plot_volatility(vix, regime):
+    if vix is None or len(vix) == 0:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=vix.index, y=vix.values, mode='lines', name='VIX', line=dict(color='#d48924', width=2.5), fill='tozeroy', fillcolor='rgba(212,137,36,0.1)'))
+    fig.add_hline(y=20, line_dash='dash', line_color='orange')
+    fig.add_hline(y=15, line_dash='dash', line_color='green')
+    fig.update_layout(title=f'VIX Dashboard - Current: {regime["current"]:.1f} ({regime["regime"]})', xaxis_title='Date', yaxis_title='VIX', height=450, template='plotly_white')
+    return fig
+
+def plot_correlation(corr_matrix):
+    if corr_matrix.empty:
+        return None
+    fig = go.Figure(data=go.Heatmap(z=corr_matrix.values, x=corr_matrix.columns, y=corr_matrix.columns, colorscale='RdBu', zmid=0, text=corr_matrix.values.round(2), texttemplate='%{text}'))
+    fig.update_layout(title='Cross-Asset Correlation Matrix', height=500, width=650, template='plotly_white')
+    return fig
+
+def plot_technical(df, ticker):
+    if df is None or df.empty:
+        return None
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.6, 0.4])
+    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Close', line=dict(color='#2c5f8a', width=2.5)), row=1, col=1)
+    if 'RSI' in df:
+        fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], mode='lines', name='RSI', line=dict(color='#4a7c59', width=2)), row=2, col=1)
+        fig.add_hline(y=70, line_dash='dash', line_color='red', row=2, col=1)
+        fig.add_hline(y=30, line_dash='dash', line_color='green', row=2, col=1)
+    fig.update_layout(title=f'Technical Analysis - {ticker}', height=600, template='plotly_white')
+    fig.update_yaxes(title_text='Price', row=1, col=1)
+    fig.update_yaxes(title_text='RSI', row=2, col=1, range=[0,100])
+    return fig
+
+def plot_factor_contributions(factor_df):
+    if factor_df is None or factor_df.empty:
+        return None
+    fig = go.Figure()
+    colors = ['#2c5f8a', '#4a7c59', '#d48924', '#c17f3a']
+    for i, col in enumerate(factor_df.columns[:4]):
+        fig.add_trace(go.Scatter(x=factor_df.index, y=factor_df[col], mode='lines', name=col, line=dict(color=colors[i % len(colors)], width=2)))
+    fig.update_layout(title='Factor Contributions', xaxis_title='Date', yaxis_title='Value', height=450, template='plotly_white')
+    return fig
+
+def plot_pca(pca_result):
+    if pca_result is None:
+        return None
+    fig = go.Figure()
+    ev = pca_result['explained'] * 100
+    fig.add_trace(go.Bar(x=[f'PC{i+1}' for i in range(len(ev))], y=ev, marker_color='#2c5f8a', text=[f'{x:.1f}%' for x in ev], textposition='outside'))
+    fig.update_layout(title='PCA Variance Explained', xaxis_title='Principal Component', yaxis_title='Variance Explained (%)', height=450, template='plotly_white')
+    return fig
+
+def plot_scenario(scenario_df, name):
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=scenario_df.index, y=scenario_df['Current'], name='Current', marker_color='#2c5f8a'))
+    fig.add_trace(go.Bar(x=scenario_df.index, y=scenario_df['Scenario'], name=name, marker_color='#d48924'))
+    fig.update_layout(title=f'Scenario Analysis - {name}', xaxis_title='Tenor', yaxis_title='Yield (%)', height=450, template='plotly_white', barmode='group')
+    return fig
 
 # =============================================================================
 # UI HELPERS
@@ -727,8 +691,7 @@ def main():
 
     ns_result = NelsonSiegelModel.fit_ns(maturities, latest)
     factor_df = factor_contributions(df)
-    pca_result = pca_decomp(df[selected])
-    dyn_df = pd.DataFrame()  # Placeholder for dynamic params
+    pca_result = pca_decomp(df[selected])  # DÜZELTİLDİ
     scenarios = scenario_engine(df[selected])
 
     # KPI Row
@@ -742,7 +705,6 @@ def main():
 
     tabs = st.tabs(["Executive", "Monte Carlo", "ML Forecast", "Backtest", "Volatility", "Correlations", "Technical", "Research", "Export"])
 
-    # Tab 0
     with tabs[0]:
         st.plotly_chart(plot_curve(maturities, latest, ns_result), use_container_width=True)
         col1, col2 = st.columns(2)
@@ -752,7 +714,6 @@ def main():
             st.plotly_chart(plot_yield_history(df, "10Y", "10-Year Treasury Yield History"), use_container_width=True)
         st.plotly_chart(plot_factor_contributions(factor_df), use_container_width=True)
 
-    # Tab 1
     with tabs[1]:
         st.subheader("Monte Carlo Simulation")
         if st.button("Run Simulation"):
@@ -764,7 +725,6 @@ def main():
                 results = MonteCarloSimulator.ci(paths)
                 st.plotly_chart(plot_monte_carlo(initial, results, fc_horizon), use_container_width=True)
 
-    # Tab 2
     with tabs[2]:
         st.subheader("Machine Learning Forecast")
         if st.button("Train Model"):
@@ -777,7 +737,6 @@ def main():
                 else:
                     st.warning(f"Need 50+ samples, have {len(X)}")
 
-    # Tab 3
     with tabs[3]:
         st.subheader("Backtesting")
         if st.button("Run Backtest"):
@@ -787,7 +746,6 @@ def main():
                 st.metric("Sharpe Ratio", f"{res['sharpe']:.2f}")
                 st.plotly_chart(plot_backtest(res), use_container_width=True)
 
-    # Tab 4
     with tabs[4]:
         st.subheader("Volatility Analytics")
         if vol_df is not None and "^VIX" in vol_df:
@@ -796,7 +754,6 @@ def main():
         else:
             st.info("VIX data unavailable")
 
-    # Tab 5
     with tabs[5]:
         st.subheader("Cross-Asset Correlations")
         if corr_df is not None and not corr_df.empty and "10Y" in df:
@@ -807,7 +764,6 @@ def main():
         else:
             st.info("Correlation data unavailable")
 
-    # Tab 6
     with tabs[6]:
         st.subheader("Technical Analysis")
         ticker = st.selectbox("Instrument", list(YAHOO_TICKERS.keys()))
@@ -817,16 +773,14 @@ def main():
         else:
             st.warning(f"No data for {ticker}")
 
-    # Tab 7
     with tabs[7]:
         st.subheader("Research")
         st.plotly_chart(plot_pca(pca_result), use_container_width=True)
-        st.dataframe(pca_result["loadings"] if pca_result else pd.DataFrame(), use_container_width=True)
-
+        if pca_result and "loadings" in pca_result:
+            st.dataframe(pca_result["loadings"], use_container_width=True)
         scenario_name = st.selectbox("Scenario", list(scenarios.keys()))
         st.plotly_chart(plot_scenario(scenarios[scenario_name], scenario_name), use_container_width=True)
 
-    # Tab 8
     with tabs[8]:
         st.subheader("Export Data")
         st.download_button("Yield Data", df.to_csv().encode(), f"yield_{datetime.now():%Y%m%d}.csv")
