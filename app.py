@@ -1,14 +1,16 @@
+
 import time
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+import yfinance as yf
 from plotly.subplots import make_subplots
 from scipy.optimize import differential_evolution, minimize
 from scipy.stats import norm
@@ -18,8 +20,17 @@ from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore")
 
+# =============================================================================
+# V35.5 FULL FOLD-IN FINAL VERSION
+# Institutional architecture refactor
+# - Light professional design
+# - Fixed tab overlap
+# - Executive / Research / Risk / Scenario / Recession / Technical / Export
+# - NS / NSS / governance / PCA / VaR / NBER / OHLC / deployment notes
+# =============================================================================
+
 st.set_page_config(
-    page_title="Yield Curve Analytics | Institutional v34",
+    page_title="Yield Curve Institutional Platform",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -35,11 +46,12 @@ COLORS = {
     "text": "#1f2937",
     "muted": "#667085",
     "accent": "#355c7d",
-    "accent_2": "#6c8ead",
+    "accent2": "#6c8ead",
     "positive": "#2f855a",
     "negative": "#c05656",
     "warning": "#b7791f",
     "recession": "rgba(120, 130, 145, 0.18)",
+    "band": "rgba(108, 142, 173, 0.10)",
 }
 
 FRED_SERIES = {
@@ -70,19 +82,22 @@ MATURITY_MAP = {
     "30Y": 30,
 }
 
+YAHOO_TICKERS = {
+    "^TNX": "10Y Treasury Yield Index",
+    "^FVX": "5Y Treasury Yield Index",
+    "^IRX": "13W T-Bill Index",
+    "TLT": "20+Y Treasury Bond ETF",
+    "IEF": "7-10Y Treasury Bond ETF",
+    "SHY": "1-3Y Treasury Bond ETF",
+}
+
 DEFAULT_STATE = {
     "api_key_validated": False,
     "api_key": "",
     "yield_data": None,
     "recession_data": None,
+    "ohlc_data": None,
     "data_fetched": False,
-    "ns_results": None,
-    "nss_results": None,
-    "dynamic_params": None,
-    "factor_data": None,
-    "pca_risk": None,
-    "forecast_data": None,
-    "arbitrage": None,
 }
 
 for key, value in DEFAULT_STATE.items():
@@ -92,7 +107,9 @@ for key, value in DEFAULT_STATE.items():
 st.markdown(
     f"""
     <style>
-    .stApp {{ background: linear-gradient(180deg, {COLORS['bg']} 0%, {COLORS['bg2']} 100%); }}
+    .stApp {{
+        background: linear-gradient(180deg, {COLORS['bg']} 0%, {COLORS['bg2']} 100%);
+    }}
     .main-title-card {{
         background: linear-gradient(90deg, {COLORS['header']} 0%, {COLORS['accent']} 100%);
         border-radius: 16px;
@@ -100,30 +117,66 @@ st.markdown(
         margin-bottom: 1rem;
         box-shadow: 0 8px 22px rgba(0,0,0,0.08);
     }}
-    .main-title {{ color: white; font-weight: 700; font-size: 1.35rem; margin: 0; }}
-    .main-sub {{ color: #dce6f2; font-size: 0.78rem; margin-top: 0.25rem; text-transform: uppercase; letter-spacing: 0.06em; }}
+    .main-title {{
+        color: white;
+        font-weight: 700;
+        font-size: 1.35rem;
+        margin: 0;
+    }}
     .metric-card {{
         background: {COLORS['surface']};
         border: 1px solid {COLORS['grid']};
         border-radius: 12px;
         padding: 0.95rem;
-        min-height: 110px;
+        min-height: 108px;
         box-shadow: 0 4px 14px rgba(16,24,40,0.04);
     }}
-    .metric-label {{ color: {COLORS['muted']}; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }}
-    .metric-value {{ color: {COLORS['text']}; font-size: 1.45rem; font-weight: 800; margin-top: 0.4rem; font-family: 'Courier New', monospace; }}
-    .metric-sub {{ color: {COLORS['muted']}; font-size: 0.73rem; margin-top: 0.3rem; line-height: 1.25; }}
-    .section-card {{
-        background: {COLORS['surface']};
+    .metric-label {{
+        color: {COLORS['muted']};
+        font-size: 0.68rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }}
+    .metric-value {{
+        color: {COLORS['text']};
+        font-size: 1.42rem;
+        font-weight: 800;
+        margin-top: 0.4rem;
+        font-family: 'Courier New', monospace;
+    }}
+    .metric-sub {{
+        color: {COLORS['muted']};
+        font-size: 0.73rem;
+        margin-top: 0.3rem;
+        line-height: 1.25;
+    }}
+    .note-box {{
+        background: {COLORS['surface_alt']};
         border: 1px solid {COLORS['grid']};
-        border-radius: 14px;
-        padding: 1rem;
-        box-shadow: 0 4px 14px rgba(16,24,40,0.04);
+        border-left: 4px solid {COLORS['accent']};
+        border-radius: 10px;
+        padding: 0.8rem 0.9rem;
+        color: {COLORS['text']};
+        font-size: 0.86rem;
     }}
-    .section-title {{ color: {COLORS['text']}; font-size: 0.9rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.65rem; }}
-    .stTabs [data-baseweb="tab-list"] {{ gap: 0; border-bottom: 1px solid {COLORS['grid']}; }}
-    .stTabs [data-baseweb="tab"] {{ color: {COLORS['muted']}; font-weight: 700; font-size: 0.72rem; text-transform: uppercase; }}
-    .stTabs [aria-selected="true"] {{ color: {COLORS['accent']}; border-bottom: 2px solid {COLORS['accent']}; }}
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 0;
+        border-bottom: 1px solid {COLORS['grid']};
+        flex-wrap: wrap !important;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        color: {COLORS['muted']};
+        font-weight: 700;
+        font-size: 0.70rem;
+        text-transform: uppercase;
+        white-space: nowrap;
+        padding: 6px 10px;
+    }}
+    .stTabs [aria-selected="true"] {{
+        color: {COLORS['accent']};
+        border-bottom: 2px solid {COLORS['accent']};
+    }}
     .stButton>button, .stDownloadButton>button {{
         background: {COLORS['surface']};
         color: {COLORS['text']};
@@ -131,13 +184,15 @@ st.markdown(
         border-radius: 8px;
         font-weight: 700;
     }}
-    .stButton>button:hover, .stDownloadButton>button:hover {{ border-color: {COLORS['accent']}; color: {COLORS['accent']}; }}
+    .stButton>button:hover, .stDownloadButton>button:hover {{
+        border-color: {COLORS['accent']};
+        color: {COLORS['accent']};
+    }}
     #MainMenu, header, footer {{ visibility: hidden; }}
     </style>
     """,
     unsafe_allow_html=True,
 )
-
 
 @dataclass
 class RuntimeConfig:
@@ -149,9 +204,11 @@ class RuntimeConfig:
     rolling_years_default: int = 5
     forecast_horizon_default: int = 20
 
-
 CFG = RuntimeConfig()
 
+# =============================================================================
+# DATA LAYER
+# =============================================================================
 
 def fred_request(api_key: str, series_id: str) -> Optional[pd.Series]:
     url = "https://api.stlouisfed.org/fred/series/observations"
@@ -183,7 +240,6 @@ def fred_request(api_key: str, series_id: str) -> Optional[pd.Series]:
             time.sleep(0.6 * (attempt + 1))
     return None
 
-
 @st.cache_data(ttl=CFG.cache_ttl_sec, show_spinner=False)
 def validate_fred_api_key(api_key: str) -> bool:
     if not api_key or len(api_key) < 10:
@@ -191,24 +247,72 @@ def validate_fred_api_key(api_key: str) -> bool:
     s = fred_request(api_key, "DGS10")
     return s is not None and len(s) > 10
 
-
 @st.cache_data(ttl=CFG.cache_ttl_sec, show_spinner=False)
 def fetch_all_yield_data(api_key: str) -> Optional[pd.DataFrame]:
     data = {}
-    for name, series_id in FRED_SERIES.items():
-        s = fred_request(api_key, series_id)
+    for name, sid in FRED_SERIES.items():
+        s = fred_request(api_key, sid)
         if s is not None:
             data[name] = s
     if not data:
         return None
-    df = pd.DataFrame(data).sort_index().dropna(how="all")
-    return df.dropna()
-
+    return pd.DataFrame(data).sort_index().dropna()
 
 @st.cache_data(ttl=CFG.cache_ttl_sec, show_spinner=False)
 def fetch_recession_data(api_key: str) -> Optional[pd.Series]:
     return fred_request(api_key, "USREC")
 
+@st.cache_data(ttl=CFG.cache_ttl_sec, show_spinner=False)
+def fetch_ohlc_data(ticker: str, period: str = "2y") -> Optional[pd.DataFrame]:
+    try:
+        df = yf.download(ticker, period=period, progress=False, auto_adjust=False)
+        if df is None or df.empty:
+            return None
+        return df
+    except Exception:
+        return None
+
+# =============================================================================
+# TECHNICALS
+# =============================================================================
+
+def sma(x: pd.Series, n: int) -> pd.Series:
+    return x.rolling(n).mean()
+
+def ema(x: pd.Series, n: int) -> pd.Series:
+    return x.ewm(span=n, adjust=False).mean()
+
+def rsi(x: pd.Series, n: int = 14) -> pd.Series:
+    delta = x.diff()
+    gain = delta.clip(lower=0).rolling(n).mean()
+    loss = (-delta.clip(upper=0)).rolling(n).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+def macd(x: pd.Series):
+    m = ema(x, 12) - ema(x, 26)
+    s = ema(m, 9)
+    return m, s, m - s
+
+def bb(x: pd.Series, n: int = 20, k: float = 2.0):
+    mid = sma(x, n)
+    sd = x.rolling(n).std()
+    return mid + k * sd, mid, mid - k * sd
+
+def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    out["SMA_20"] = sma(out["Close"], 20)
+    out["SMA_50"] = sma(out["Close"], 50)
+    out["RSI"] = rsi(out["Close"], 14)
+    out["MACD"], out["MACD_Signal"], out["MACD_Hist"] = macd(out["Close"])
+    out["BB_Upper"], out["BB_Middle"], out["BB_Lower"] = bb(out["Close"])
+    return out
+
+# =============================================================================
+# ANALYTICS
+# =============================================================================
 
 def compute_spreads(yield_df: pd.DataFrame) -> pd.DataFrame:
     spreads = pd.DataFrame(index=yield_df.index)
@@ -222,7 +326,6 @@ def compute_spreads(yield_df: pd.DataFrame) -> pd.DataFrame:
         spreads["30Y-10Y"] = (yield_df["30Y"] - yield_df["10Y"]) * 100
     return spreads
 
-
 def classify_regime(spreads: pd.DataFrame, yield_df: pd.DataFrame) -> Tuple[str, str]:
     spread = spreads["10Y-2Y"].iloc[-1] if "10Y-2Y" in spreads.columns else np.nan
     y10 = yield_df["10Y"].iloc[-1] if "10Y" in yield_df.columns else np.nan
@@ -234,7 +337,6 @@ def classify_regime(spreads: pd.DataFrame, yield_df: pd.DataFrame) -> Tuple[str,
         return "Neutral / Restrictive", "Long-end rates remain restrictive."
     return "Risk-on", "Positive slope supports pro-risk macro positioning."
 
-
 def recession_probability_proxy(spreads: pd.DataFrame, yield_df: pd.DataFrame) -> float:
     score = 0.0
     if "10Y-2Y" in spreads.columns:
@@ -244,7 +346,6 @@ def recession_probability_proxy(spreads: pd.DataFrame, yield_df: pd.DataFrame) -
     if "10Y" in yield_df.columns:
         score += np.clip((yield_df["10Y"].iloc[-1] - 4.5) / 3.0, 0, 1.0)
     return float(1 / (1 + np.exp(-2.2 * (score - 0.8))))
-
 
 def identify_recessions(recession_series: Optional[pd.Series]) -> List[dict]:
     if recession_series is None or len(recession_series) == 0:
@@ -265,7 +366,6 @@ def identify_recessions(recession_series: Optional[pd.Series]) -> List[dict]:
             })
             in_rec = False
     return recessions
-
 
 def calculate_inversion_periods(spreads: pd.DataFrame) -> List[dict]:
     if "10Y-2Y" not in spreads.columns:
@@ -290,7 +390,6 @@ def calculate_inversion_periods(spreads: pd.DataFrame) -> List[dict]:
             in_inv = False
     return periods
 
-
 def calculate_lead_times(inversions: List[dict], recessions: List[dict]) -> List[dict]:
     lead_times = []
     for inv in inversions:
@@ -306,7 +405,6 @@ def calculate_lead_times(inversions: List[dict], recessions: List[dict]) -> List
                 })
                 break
     return lead_times
-
 
 class NelsonSiegelModel:
     @staticmethod
@@ -335,16 +433,8 @@ class NelsonSiegelModel:
     def fit_ns(maturities: np.ndarray, yields_: np.ndarray):
         def objective(params):
             fitted = NelsonSiegelModel.nelson_siegel(maturities, *params)
-            resid = yields_ - fitted
-            return np.sum(resid ** 2)
-
-        bounds = [
-            (yields_.min() - 2, yields_.max() + 2),
-            (-15, 15),
-            (-15, 15),
-            (0.01, 5),
-        ]
-
+            return np.sum((yields_ - fitted) ** 2)
+        bounds = [(yields_.min() - 2, yields_.max() + 2), (-15, 15), (-15, 15), (0.01, 5)]
         best = None
         best_fun = np.inf
         for _ in range(8):
@@ -352,7 +442,6 @@ class NelsonSiegelModel:
             res = minimize(objective, x0=x0, bounds=bounds, method="L-BFGS-B")
             if res.success and res.fun < best_fun:
                 best, best_fun = res, res.fun
-
         if best is None:
             return None
         fitted = NelsonSiegelModel.nelson_siegel(maturities, *best.x)
@@ -364,6 +453,7 @@ class NelsonSiegelModel:
             "rmse": float(np.sqrt(np.mean((yields_ - fitted) ** 2))),
             "mae": float(np.mean(np.abs(yields_ - fitted))),
             "r_squared": float(1 - sse / sst) if sst > 0 else np.nan,
+            "residuals": yields_ - fitted,
         }
 
     @staticmethod
@@ -372,16 +462,11 @@ class NelsonSiegelModel:
             fitted = NelsonSiegelModel.nss(maturities, *params)
             weights = 1 / (maturities + 0.25)
             return np.sum(weights * (yields_ - fitted) ** 2)
-
         bounds = [
             (yields_.min() - 2, yields_.max() + 2),
-            (-20, 20),
-            (-20, 20),
-            (-20, 20),
-            (0.01, 10),
-            (0.01, 10),
+            (-20, 20), (-20, 20), (-20, 20),
+            (0.01, 10), (0.01, 10),
         ]
-
         res = differential_evolution(objective, bounds=bounds, maxiter=220, popsize=10, polish=True, seed=42)
         if not res.success:
             return None
@@ -394,8 +479,38 @@ class NelsonSiegelModel:
             "rmse": float(np.sqrt(np.mean((yields_ - fitted) ** 2))),
             "mae": float(np.mean(np.abs(yields_ - fitted))),
             "r_squared": float(1 - sse / sst) if sst > 0 else np.nan,
+            "residuals": yields_ - fitted,
         }
 
+def model_governance(ns_result: Optional[dict], nss_result: Optional[dict]) -> pd.DataFrame:
+    rows = []
+    for name, res in [("NS", ns_result), ("NSS", nss_result)]:
+        if res is None:
+            continue
+        rmse = res["rmse"]
+        r2 = res["r_squared"]
+        max_abs = float(np.max(np.abs(res["residuals"])))
+        if rmse < 0.05 and r2 > 0.98:
+            confidence = "High"
+        elif rmse < 0.10 and r2 > 0.95:
+            confidence = "Moderate"
+        else:
+            confidence = "Low"
+        flags = []
+        if max_abs > 0.15:
+            flags.append("Residual outlier")
+        if r2 < 0.95:
+            flags.append("Low fit")
+        rows.append({
+            "Model": name,
+            "RMSE": rmse,
+            "MAE": res["mae"],
+            "R2": r2,
+            "MaxAbsResidual": max_abs,
+            "FitConfidence": confidence,
+            "WarningFlags": ", ".join(flags) if flags else "None",
+        })
+    return pd.DataFrame(rows)
 
 def rolling_ns_parameters(yield_df: pd.DataFrame, maturities: np.ndarray, selected_cols: List[str], years: int) -> pd.DataFrame:
     window_size = years * 252
@@ -416,7 +531,6 @@ def rolling_ns_parameters(yield_df: pd.DataFrame, maturities: np.ndarray, select
             })
     return pd.DataFrame(out)
 
-
 def factor_contributions(yield_df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=yield_df.index)
     if "10Y" in yield_df.columns:
@@ -425,8 +539,9 @@ def factor_contributions(yield_df: pd.DataFrame) -> pd.DataFrame:
         out["Slope"] = (yield_df["10Y"] - yield_df["3M"]) * 100
     if {"3M", "5Y", "10Y"}.issubset(yield_df.columns):
         out["Curvature"] = (2 * yield_df["5Y"] - (yield_df["3M"] + yield_df["10Y"])) * 100
+    if {"2Y", "10Y", "30Y"}.issubset(yield_df.columns):
+        out["Butterfly"] = (2 * yield_df["10Y"] - (yield_df["2Y"] + yield_df["30Y"])) * 100
     return out
-
 
 def pca_risk_decomp(yield_df: pd.DataFrame, n_components: int = 3) -> Optional[dict]:
     returns = yield_df.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
@@ -445,7 +560,6 @@ def pca_risk_decomp(yield_df: pd.DataFrame, n_components: int = 3) -> Optional[d
         "loadings": loadings,
         "factors": factors,
     }
-
 
 def calculate_var_metrics(returns: pd.Series, confidence: float = 0.95, horizon: int = 10) -> Optional[dict]:
     returns = returns.dropna()
@@ -467,7 +581,6 @@ def calculate_var_metrics(returns: pd.Series, confidence: float = 0.95, horizon:
         "Kurtosis": float(kurt),
     }
 
-
 def forecast_curve(yield_df: pd.DataFrame, horizon: int = 20) -> pd.DataFrame:
     if len(yield_df) < 120:
         return pd.DataFrame()
@@ -481,6 +594,65 @@ def forecast_curve(yield_df: pd.DataFrame, horizon: int = 20) -> pd.DataFrame:
     dates = pd.bdate_range(yield_df.index[-1] + pd.Timedelta(days=1), periods=horizon)
     return pd.DataFrame(out, index=dates)
 
+def scenario_engine(yield_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    latest = yield_df.iloc[-1].copy()
+    scenarios = {}
+    tenor_order = list(yield_df.columns)
+
+    # Bull steepener: long-end down more than short-end
+    bull = latest.copy()
+    for col in tenor_order:
+        m = MATURITY_MAP.get(col, 1)
+        bull[col] = bull[col] - (0.08 + 0.06 * min(m / 10, 1.5))
+    scenarios["Bull Steepener"] = pd.DataFrame({"Current": latest, "Scenario": bull})
+
+    # Bear flattener: front-end up more than long-end
+    bear = latest.copy()
+    for col in tenor_order:
+        m = MATURITY_MAP.get(col, 1)
+        bear[col] = bear[col] + (0.14 if m <= 2 else 0.07)
+    scenarios["Bear Flattener"] = pd.DataFrame({"Current": latest, "Scenario": bear})
+
+    # Recession case: broad rally, short end falls sharply
+    recession = latest.copy()
+    for col in tenor_order:
+        m = MATURITY_MAP.get(col, 1)
+        recession[col] = recession[col] - (0.22 if m <= 2 else 0.14 if m <= 10 else 0.10)
+    scenarios["Recession Case"] = pd.DataFrame({"Current": latest, "Scenario": recession})
+
+    # Policy easing: front-end down, moderate long-end response
+    easing = latest.copy()
+    for col in tenor_order:
+        m = MATURITY_MAP.get(col, 1)
+        easing[col] = easing[col] - (0.25 if m <= 2 else 0.12 if m <= 10 else 0.06)
+    scenarios["Policy Easing"] = pd.DataFrame({"Current": latest, "Scenario": easing})
+
+    return scenarios
+
+def recession_hit_stats(inversions: List[dict], recessions: List[dict]) -> dict:
+    if not inversions:
+        return {"HitRatio": np.nan, "FalsePositiveRate": np.nan, "Matches": 0, "Signals": 0}
+    leads = calculate_lead_times(inversions, recessions)
+    matches = len(leads)
+    signals = len(inversions)
+    false_positives = signals - matches
+    return {
+        "HitRatio": matches / signals if signals else np.nan,
+        "FalsePositiveRate": false_positives / signals if signals else np.nan,
+        "Matches": matches,
+        "Signals": signals,
+    }
+
+def current_inversion_vs_history(spreads: pd.DataFrame, inversions: List[dict]) -> pd.DataFrame:
+    if "10Y-2Y" not in spreads.columns:
+        return pd.DataFrame()
+    current = spreads["10Y-2Y"].iloc[-1]
+    rows = [{"Metric": "Current 10Y-2Y", "Value": current}]
+    if inversions:
+        rows.append({"Metric": "Historical Min Inversion", "Value": min(x["depth"] for x in inversions)})
+        rows.append({"Metric": "Historical Avg Inversion Depth", "Value": np.mean([x["depth"] for x in inversions])})
+        rows.append({"Metric": "Historical Avg Duration Days", "Value": np.mean([x["duration_days"] for x in inversions])})
+    return pd.DataFrame(rows)
 
 def arbitrage_diagnostics(yield_df: pd.DataFrame, maturities: np.ndarray) -> Optional[dict]:
     latest = yield_df.iloc[-1].values[: len(maturities)]
@@ -507,14 +679,14 @@ def arbitrage_diagnostics(yield_df: pd.DataFrame, maturities: np.ndarray) -> Opt
         "mispriced_table": pd.DataFrame(rows) if rows else pd.DataFrame(),
     }
 
+# =============================================================================
+# VISUALS
+# =============================================================================
 
 def add_recession_bands(fig: go.Figure, recessions: List[dict]) -> go.Figure:
     for rec in recessions:
-        fig.add_vrect(
-            x0=rec["start"], x1=rec["end"], fillcolor=COLORS["recession"], opacity=0.35, layer="below", line_width=0
-        )
+        fig.add_vrect(x0=rec["start"], x1=rec["end"], fillcolor=COLORS["recession"], opacity=0.35, layer="below", line_width=0)
     return fig
-
 
 def create_chart_layout(fig: go.Figure, title: str, y_title: Optional[str] = None, height: int = 460) -> go.Figure:
     fig.update_layout(
@@ -534,24 +706,26 @@ def create_chart_layout(fig: go.Figure, title: str, y_title: Optional[str] = Non
         fig.update_yaxes(title_text=y_title)
     return fig
 
+def chart_current_curve(maturities: np.ndarray, yields_: np.ndarray, ns_result: Optional[dict], nss_result: Optional[dict]) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=maturities, y=yields_, mode="markers+lines", name="Actual",
+        marker=dict(size=10, color=COLORS["accent"]),
+        line=dict(color=COLORS["accent2"], width=2),
+    ))
+    if ns_result:
+        fig.add_trace(go.Scatter(x=maturities, y=ns_result["fitted_values"], mode="lines", name="NS", line=dict(color=COLORS["positive"], width=2.2)))
+    if nss_result:
+        fig.add_trace(go.Scatter(x=maturities, y=nss_result["fitted_values"], mode="lines", name="NSS", line=dict(color=COLORS["warning"], width=2.2, dash="dash")))
+    return create_chart_layout(fig, "Current Treasury Curve and Model Fits", "Yield (%)", 440)
 
-def chart_2y(yield_df: pd.DataFrame) -> Optional[go.Figure]:
-    if "2Y" not in yield_df.columns:
+def chart_yield(yield_df: pd.DataFrame, tenor: str, color: str, title: str) -> Optional[go.Figure]:
+    if tenor not in yield_df.columns:
         return None
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=yield_df.index, y=yield_df["2Y"], mode="lines", name="2Y", line=dict(color=COLORS["warning"], width=2.2)))
+    fig.add_trace(go.Scatter(x=yield_df.index, y=yield_df[tenor], mode="lines", name=tenor, line=dict(color=color, width=2.2)))
     fig.update_layout(xaxis=dict(rangeslider=dict(visible=True), type="date"))
-    return create_chart_layout(fig, "2-Year Treasury Yield", "Yield (%)")
-
-
-def chart_10y(yield_df: pd.DataFrame) -> Optional[go.Figure]:
-    if "10Y" not in yield_df.columns:
-        return None
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=yield_df.index, y=yield_df["10Y"], mode="lines", name="10Y", line=dict(color=COLORS["accent"], width=2.2)))
-    fig.update_layout(xaxis=dict(rangeslider=dict(visible=True), type="date"))
-    return create_chart_layout(fig, "10-Year Treasury Yield", "Yield (%)")
-
+    return create_chart_layout(fig, title, "Yield (%)", 420)
 
 def chart_spreads(spreads: pd.DataFrame, recessions: List[dict]) -> go.Figure:
     fig = go.Figure()
@@ -562,26 +736,100 @@ def chart_spreads(spreads: pd.DataFrame, recessions: List[dict]) -> go.Figure:
     add_recession_bands(fig, recessions)
     return create_chart_layout(fig, "Treasury Spread Dashboard", "bps", 520)
 
-
-def chart_current_curve(maturities: np.ndarray, yields_: np.ndarray, ns_result: Optional[dict], nss_result: Optional[dict]) -> go.Figure:
+def chart_model_residuals(selected_cols: List[str], ns_result: Optional[dict], nss_result: Optional[dict]) -> Optional[go.Figure]:
+    if ns_result is None and nss_result is None:
+        return None
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=maturities, y=yields_, mode="markers+lines", name="Actual", marker=dict(size=10, color=COLORS["accent"]), line=dict(color=COLORS["accent_2"], width=2)))
     if ns_result:
-        fig.add_trace(go.Scatter(x=maturities, y=ns_result["fitted_values"], mode="lines", name="NS", line=dict(color=COLORS["positive"], width=2.2)))
+        fig.add_trace(go.Bar(x=selected_cols, y=ns_result["residuals"], name="NS Residuals", marker_color=COLORS["positive"], opacity=0.65))
     if nss_result:
-        fig.add_trace(go.Scatter(x=maturities, y=nss_result["fitted_values"], mode="lines", name="NSS", line=dict(color=COLORS["warning"], width=2.2, dash="dash")))
-    return create_chart_layout(fig, "Current Treasury Curve and Model Fits", "Yield (%)", 440)
+        fig.add_trace(go.Bar(x=selected_cols, y=nss_result["residuals"], name="NSS Residuals", marker_color=COLORS["warning"], opacity=0.65))
+    fig.add_hline(y=0, line_dash="dash", line_color=COLORS["muted"])
+    return create_chart_layout(fig, "Residual Quality", "Residual", 420)
 
+def chart_dynamic(dynamic_params: pd.DataFrame) -> Optional[go.Figure]:
+    if dynamic_params is None or dynamic_params.empty:
+        return None
+    fig = make_subplots(rows=2, cols=2, subplot_titles=("β0 Level", "β1 Slope", "β2 Curvature", "RMSE"))
+    fig.add_trace(go.Scatter(x=dynamic_params["date"], y=dynamic_params["beta0"], mode="lines", name="β0", line=dict(color=COLORS["positive"])), row=1, col=1)
+    fig.add_trace(go.Scatter(x=dynamic_params["date"], y=dynamic_params["beta1"], mode="lines", name="β1", line=dict(color=COLORS["accent"])), row=1, col=2)
+    fig.add_trace(go.Scatter(x=dynamic_params["date"], y=dynamic_params["beta2"], mode="lines", name="β2", line=dict(color=COLORS["warning"])), row=2, col=1)
+    fig.add_trace(go.Scatter(x=dynamic_params["date"], y=dynamic_params["rmse"], mode="lines", name="RMSE", line=dict(color=COLORS["muted"])), row=2, col=2)
+    return create_chart_layout(fig, "Rolling Nelson-Siegel Parameters", height=620)
+
+def chart_factors(factor_df: pd.DataFrame) -> Optional[go.Figure]:
+    if factor_df is None or factor_df.empty:
+        return None
+    fig = go.Figure()
+    palette = [COLORS["accent"], COLORS["warning"], COLORS["positive"], COLORS["accent2"]]
+    for i, col in enumerate(factor_df.columns):
+        fig.add_trace(go.Scatter(x=factor_df.index, y=factor_df[col], mode="lines", name=col, line=dict(color=palette[i % len(palette)], width=1.8)))
+    return create_chart_layout(fig, "Historical Factor Contributions", "Value", 430)
+
+def chart_pca_variance(pca_risk: Optional[dict]) -> Optional[go.Figure]:
+    if not pca_risk:
+        return None
+    fig = go.Figure()
+    ev = pca_risk["explained_variance"] * 100
+    fig.add_trace(go.Bar(x=[f"PC{i+1}" for i in range(len(ev))], y=ev, marker_color=COLORS["accent"]))
+    return create_chart_layout(fig, "PCA Variance Explained", "Percent", 430)
+
+def chart_scenario(scenario_df: pd.DataFrame, scenario_name: str) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=scenario_df.index, y=scenario_df["Current"], name="Current", marker_color=COLORS["accent2"]))
+    fig.add_trace(go.Bar(x=scenario_df.index, y=scenario_df["Scenario"], name=scenario_name, marker_color=COLORS["warning"]))
+    fig.update_layout(barmode="group")
+    return create_chart_layout(fig, f"Scenario Analysis | {scenario_name}", "Yield (%)", 460)
+
+def chart_ohlc(ohlc_df: pd.DataFrame, ticker: str) -> Optional[go.Figure]:
+    if ohlc_df is None or ohlc_df.empty:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
+        x=ohlc_df.index, open=ohlc_df["Open"], high=ohlc_df["High"], low=ohlc_df["Low"], close=ohlc_df["Close"],
+        increasing=dict(line=dict(color=COLORS["positive"]), fillcolor=COLORS["positive"]),
+        decreasing=dict(line=dict(color=COLORS["negative"]), fillcolor=COLORS["negative"]),
+        name=ticker,
+    ))
+    if "SMA_20" in ohlc_df.columns:
+        fig.add_trace(go.Scatter(x=ohlc_df.index, y=ohlc_df["SMA_20"], mode="lines", name="SMA 20", line=dict(color=COLORS["accent"], width=1.2)))
+    if "SMA_50" in ohlc_df.columns:
+        fig.add_trace(go.Scatter(x=ohlc_df.index, y=ohlc_df["SMA_50"], mode="lines", name="SMA 50", line=dict(color=COLORS["warning"], width=1.2)))
+    fig.update_layout(xaxis=dict(rangeslider=dict(visible=True), type="date"))
+    return create_chart_layout(fig, f"OHLC | {ticker}", "Price", 520)
+
+def chart_technical_panels(ohlc_df: pd.DataFrame, ticker: str) -> Optional[go.Figure]:
+    if ohlc_df is None or ohlc_df.empty:
+        return None
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05,
+        row_heights=[0.5, 0.25, 0.25],
+        subplot_titles=(f"{ticker} Close", "RSI (14)", "MACD"),
+    )
+    fig.add_trace(go.Scatter(x=ohlc_df.index, y=ohlc_df["Close"], mode="lines", name="Close", line=dict(color=COLORS["accent2"], width=2)), row=1, col=1)
+    if "BB_Upper" in ohlc_df.columns:
+        fig.add_trace(go.Scatter(x=ohlc_df.index, y=ohlc_df["BB_Upper"], mode="lines", name="BB Upper", line=dict(color=COLORS["muted"], width=1)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=ohlc_df.index, y=ohlc_df["BB_Lower"], mode="lines", name="BB Lower", line=dict(color=COLORS["muted"], width=1), fill='tonexty', fillcolor=COLORS["band"]), row=1, col=1)
+    if "RSI" in ohlc_df.columns:
+        fig.add_trace(go.Scatter(x=ohlc_df.index, y=ohlc_df["RSI"], mode="lines", name="RSI", line=dict(color=COLORS["accent"], width=1.5)), row=2, col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color=COLORS["negative"], row=2, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color=COLORS["positive"], row=2, col=1)
+    if "MACD" in ohlc_df.columns:
+        fig.add_trace(go.Scatter(x=ohlc_df.index, y=ohlc_df["MACD"], mode="lines", name="MACD", line=dict(color=COLORS["positive"], width=1.4)), row=3, col=1)
+        fig.add_trace(go.Scatter(x=ohlc_df.index, y=ohlc_df["MACD_Signal"], mode="lines", name="Signal", line=dict(color=COLORS["negative"], width=1.4)), row=3, col=1)
+    return create_chart_layout(fig, f"Technical Analysis | {ticker}", height=760)
+
+# =============================================================================
+# UI HELPERS
+# =============================================================================
 
 def render_api_gate() -> None:
     st.markdown(
         f"""
-        <div class="section-card" style="max-width:560px; margin:40px auto; text-align:center;">
-            <div class="section-title">FRED API Key Required</div>
-            <div style="color:{COLORS['muted']}; font-size:0.85rem;">
-                This institutional dashboard uses live U.S. Treasury data from FRED.<br>
-                Get a free API key from the official FRED documentation page.
-            </div>
+        <div class="note-box" style="max-width:560px; margin:40px auto; text-align:center;">
+            <b>FRED API Key Required</b><br><br>
+            This institutional dashboard uses live U.S. Treasury data from FRED.<br>
+            Get a free API key from the official FRED documentation page.
         </div>
         """,
         unsafe_allow_html=True,
@@ -603,20 +851,21 @@ def render_api_gate() -> None:
             st.error("Invalid API key.")
     st.stop()
 
-
 def kpi_card(label: str, value: str, sub: str) -> None:
     st.markdown(
         f'<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div><div class="metric-sub">{sub}</div></div>',
         unsafe_allow_html=True,
     )
 
+# =============================================================================
+# MAIN APP
+# =============================================================================
 
 def main() -> None:
     st.markdown(
         """
         <div class="main-title-card">
-            <div class="main-title">Yield Curve Analytics | Institutional v34 Refactor</div>
-            <div class="main-sub">Executive reporting • research diagnostics • lighter professional design • systematic section redesign</div>
+            <div class="main-title">Yield Curve Institutional Platform | Full Fold-In Final Version</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -639,20 +888,29 @@ def main() -> None:
         rolling_years = st.slider("Rolling window (years)", 2, 10, CFG.rolling_years_default)
         forecast_horizon = st.slider("Forecast horizon (business days)", 5, 60, CFG.forecast_horizon_default)
         confidence_level = st.slider("VaR confidence", 0.90, 0.99, 0.95, 0.01)
+        ohlc_period = st.selectbox("OHLC period", ["6mo", "1y", "2y", "5y"], index=2)
 
     if not st.session_state.data_fetched:
-        with st.spinner("Fetching Treasury and recession data from FRED..."):
+        with st.spinner("Fetching Treasury, recession, and OHLC data..."):
             yield_df = fetch_all_yield_data(st.session_state.api_key)
             recession_series = fetch_recession_data(st.session_state.api_key)
+            ohlc_data = {}
+            for ticker in YAHOO_TICKERS:
+                df = fetch_ohlc_data(ticker, ohlc_period)
+                if df is not None and not df.empty:
+                    ohlc_data[ticker] = add_technical_indicators(df)
         if yield_df is None:
             st.error("Failed to fetch FRED data.")
             st.stop()
         st.session_state.yield_data = yield_df
         st.session_state.recession_data = recession_series
+        st.session_state.ohlc_data = ohlc_data
         st.session_state.data_fetched = True
 
     yield_df = st.session_state.yield_data.copy()
     recession_series = st.session_state.recession_data.copy() if st.session_state.recession_data is not None else None
+    ohlc_data = st.session_state.ohlc_data if st.session_state.ohlc_data is not None else {}
+
     selected_cols = [c for c in yield_df.columns if c in MATURITY_MAP]
     maturities = np.array([MATURITY_MAP[c] for c in selected_cols], dtype=float)
     latest_curve = yield_df.iloc[-1][selected_cols].values.astype(float)
@@ -661,6 +919,7 @@ def main() -> None:
     recessions = identify_recessions(recession_series)
     inversions = calculate_inversion_periods(spreads)
     lead_times = calculate_lead_times(inversions, recessions)
+    hit_stats = recession_hit_stats(inversions, recessions)
     regime, regime_text = classify_regime(spreads, yield_df)
     recession_prob = recession_probability_proxy(spreads, yield_df)
 
@@ -669,13 +928,16 @@ def main() -> None:
     current_30y = yield_df["30Y"].iloc[-1] if "30Y" in yield_df.columns else np.nan
     current_spread = spreads["10Y-2Y"].iloc[-1] if "10Y-2Y" in spreads.columns else np.nan
 
-    ns_result = NelsonSiegelModel.fit_ns(maturities, latest_curve)
-    nss_result = NelsonSiegelModel.fit_nss(maturities, latest_curve)
-    dynamic_params = rolling_ns_parameters(yield_df[selected_cols], maturities, selected_cols, rolling_years)
-    factor_df = factor_contributions(yield_df)
-    pca_risk = pca_risk_decomp(yield_df[selected_cols])
-    forecast_df = forecast_curve(yield_df[selected_cols], forecast_horizon)
-    arb = arbitrage_diagnostics(yield_df[selected_cols], maturities)
+    with st.spinner("Running model layer..."):
+        ns_result = NelsonSiegelModel.fit_ns(maturities, latest_curve)
+        nss_result = NelsonSiegelModel.fit_nss(maturities, latest_curve)
+        governance_df = model_governance(ns_result, nss_result)
+        dynamic_params = rolling_ns_parameters(yield_df[selected_cols], maturities, selected_cols, rolling_years)
+        factor_df = factor_contributions(yield_df)
+        pca_risk = pca_risk_decomp(yield_df[selected_cols])
+        forecast_df = forecast_curve(yield_df[selected_cols], forecast_horizon)
+        arb = arbitrage_diagnostics(yield_df[selected_cols], maturities)
+        scenarios = scenario_engine(yield_df[selected_cols])
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
@@ -691,48 +953,31 @@ def main() -> None:
     with c6:
         kpi_card("Recession Probability", f"{100 * recession_prob:.1f}%", "Institutional proxy")
 
-    executive_tabs = st.tabs(["Executive View", "Research View", "Risk & Recession", "Forecast & Export"])
+    top_tabs = st.tabs([
+        "Executive View",
+        "Research View",
+        "Risk Metrics",
+        "Historical Scenario Analysis and Simulations",
+        "Recession Analysis",
+        "Technical Analysis",
+        "Export and Deployment",
+    ])
 
-    with executive_tabs[0]:
-        left, right = st.columns([1.15, 1])
+    with top_tabs[0]:
+        st.plotly_chart(chart_current_curve(maturities, latest_curve, ns_result, nss_result), use_container_width=True)
+        left, right = st.columns([1, 1])
         with left:
-            st.plotly_chart(chart_current_curve(maturities, latest_curve, ns_result, nss_result), use_container_width=True)
-        with right:
-            summary_df = pd.DataFrame({
-                "Metric": ["Regime", "2Y", "10Y", "30Y", "10Y-2Y", "10Y-3M", "Recession Probability"],
-                "Value": [
-                    regime,
-                    f"{current_2y:.2f}%",
-                    f"{current_10y:.2f}%",
-                    f"{current_30y:.2f}%" if np.isfinite(current_30y) else "N/A",
-                    f"{current_spread:.1f} bps" if np.isfinite(current_spread) else "N/A",
-                    f"{spreads['10Y-3M'].iloc[-1]:.1f} bps" if '10Y-3M' in spreads.columns else 'N/A',
-                    f"{100 * recession_prob:.1f}%",
-                ],
-                "Interpretation": [
-                    regime_text,
-                    "Short-end benchmark",
-                    "Long-end benchmark",
-                    "Ultra-long reference",
-                    "Primary slope signal",
-                    "Alternative recession signal",
-                    "Internal probability proxy",
-                ],
-            })
-            st.dataframe(summary_df, use_container_width=True, hide_index=True)
-        lower_left, lower_right = st.columns(2)
-        with lower_left:
-            fig2 = chart_2y(yield_df)
+            fig2 = chart_yield(yield_df, "2Y", COLORS["warning"], "2-Year Treasury Yield")
             if fig2:
                 st.plotly_chart(fig2, use_container_width=True)
-        with lower_right:
-            fig10 = chart_10y(yield_df)
+        with right:
+            fig10 = chart_yield(yield_df, "10Y", COLORS["accent"], "10-Year Treasury Yield")
             if fig10:
                 st.plotly_chart(fig10, use_container_width=True)
         st.plotly_chart(chart_spreads(spreads, recessions), use_container_width=True)
 
-    with executive_tabs[1]:
-        research_tabs = st.tabs(["Data Table", "NS Model", "NSS Model", "Dynamic Analysis", "Factor & PCA"])
+    with top_tabs[1]:
+        research_tabs = st.tabs(["Data Table", "NS Model", "NSS Model", "Model Governance", "Dynamic Analysis", "Factor and PCA"])
         with research_tabs[0]:
             display_df = yield_df.iloc[::-1].reset_index()
             display_df.columns = ["Date"] + list(yield_df.columns)
@@ -745,8 +990,9 @@ def main() -> None:
                 st.dataframe(pd.DataFrame({
                     "Parameter": ["β0 Level", "β1 Slope", "β2 Curvature", "λ Decay", "RMSE", "MAE", "R²"],
                     "Value": [
-                        f"{ns_result['params'][0]:.4f}", f"{ns_result['params'][1]:.4f}", f"{ns_result['params'][2]:.4f}", f"{ns_result['params'][3]:.4f}",
-                        f"{ns_result['rmse']:.4f}", f"{ns_result['mae']:.4f}", f"{ns_result['r_squared']:.4f}"
+                        f"{ns_result['params'][0]:.4f}", f"{ns_result['params'][1]:.4f}", f"{ns_result['params'][2]:.4f}",
+                        f"{ns_result['params'][3]:.4f}", f"{ns_result['rmse']:.4f}", f"{ns_result['mae']:.4f}",
+                        f"{ns_result['r_squared']:.4f}",
                     ]
                 }), use_container_width=True, hide_index=True)
         with research_tabs[2]:
@@ -754,100 +1000,181 @@ def main() -> None:
                 st.dataframe(pd.DataFrame({
                     "Parameter": ["β0", "β1", "β2", "β3", "λ1", "λ2", "RMSE", "MAE", "R²"],
                     "Value": [
-                        f"{nss_result['params'][0]:.4f}", f"{nss_result['params'][1]:.4f}", f"{nss_result['params'][2]:.4f}", f"{nss_result['params'][3]:.4f}",
-                        f"{nss_result['params'][4]:.4f}", f"{nss_result['params'][5]:.4f}", f"{nss_result['rmse']:.4f}", f"{nss_result['mae']:.4f}", f"{nss_result['r_squared']:.4f}"
+                        f"{nss_result['params'][0]:.4f}", f"{nss_result['params'][1]:.4f}", f"{nss_result['params'][2]:.4f}",
+                        f"{nss_result['params'][3]:.4f}", f"{nss_result['params'][4]:.4f}", f"{nss_result['params'][5]:.4f}",
+                        f"{nss_result['rmse']:.4f}", f"{nss_result['mae']:.4f}", f"{nss_result['r_squared']:.4f}",
                     ]
                 }), use_container_width=True, hide_index=True)
         with research_tabs[3]:
-            if dynamic_params is not None and not dynamic_params.empty:
-                fig = make_subplots(rows=2, cols=2, subplot_titles=("β0 Level", "β1 Slope", "β2 Curvature", "RMSE"))
-                fig.add_trace(go.Scatter(x=dynamic_params['date'], y=dynamic_params['beta0'], mode='lines', name='β0', line=dict(color=COLORS['positive'])), row=1, col=1)
-                fig.add_trace(go.Scatter(x=dynamic_params['date'], y=dynamic_params['beta1'], mode='lines', name='β1', line=dict(color=COLORS['accent'])), row=1, col=2)
-                fig.add_trace(go.Scatter(x=dynamic_params['date'], y=dynamic_params['beta2'], mode='lines', name='β2', line=dict(color=COLORS['warning'])), row=2, col=1)
-                fig.add_trace(go.Scatter(x=dynamic_params['date'], y=dynamic_params['rmse'], mode='lines', name='RMSE', line=dict(color=COLORS['muted'])), row=2, col=2)
-                st.plotly_chart(create_chart_layout(fig, 'Rolling Nelson-Siegel Parameters', height=620), use_container_width=True)
+            st.dataframe(governance_df.round(4), use_container_width=True, hide_index=True)
+            fig_resid = chart_model_residuals(selected_cols, ns_result, nss_result)
+            if fig_resid:
+                st.plotly_chart(fig_resid, use_container_width=True)
+            st.markdown(
+                """
+                <div class="note-box">
+                <b>Model Governance Guidance</b><br><br>
+                <b>Fit Confidence</b> summarizes whether the model is close enough to the observed curve for institutional use.<br>
+                <b>Residual Quality</b> highlights which maturities are poorly explained by the model.<br>
+                <b>Warning Flags</b> identify outliers or weak fit conditions where investment conclusions should be treated more cautiously.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
         with research_tabs[4]:
-            col_a, col_b = st.columns(2)
-            with col_a:
-                if factor_df is not None and not factor_df.empty:
-                    fig = go.Figure()
-                    palette = [COLORS['accent'], COLORS['warning'], COLORS['positive']]
-                    for i, col in enumerate(factor_df.columns):
-                        fig.add_trace(go.Scatter(x=factor_df.index, y=factor_df[col], mode='lines', name=col, line=dict(color=palette[i % len(palette)], width=1.8)))
-                    st.plotly_chart(create_chart_layout(fig, 'Historical Factor Contributions', 'Value', 430), use_container_width=True)
-            with col_b:
+            fig_dyn = chart_dynamic(dynamic_params)
+            if fig_dyn:
+                st.plotly_chart(fig_dyn, use_container_width=True)
+        with research_tabs[5]:
+            l, r = st.columns(2)
+            with l:
+                fig_factor = chart_factors(factor_df)
+                if fig_factor:
+                    st.plotly_chart(fig_factor, use_container_width=True)
+            with r:
+                fig_pca = chart_pca_variance(pca_risk)
+                if fig_pca:
+                    st.plotly_chart(fig_pca, use_container_width=True)
                 if pca_risk:
-                    fig = go.Figure()
-                    ev = pca_risk['explained_variance'] * 100
-                    fig.add_trace(go.Bar(x=[f'PC{i+1}' for i in range(len(ev))], y=ev, marker_color=COLORS['accent']))
-                    st.plotly_chart(create_chart_layout(fig, 'PCA Variance Explained', 'Percent', 430), use_container_width=True)
-                    st.dataframe(pca_risk['loadings'].round(4), use_container_width=True)
+                    st.dataframe(pca_risk["loadings"].round(4), use_container_width=True)
 
-    with executive_tabs[2]:
-        rr_tabs = st.tabs(["Risk Metrics", "Recession", "Lead Times", "Arbitrage"])
+    with top_tabs[2]:
+        if "10Y" in yield_df.columns:
+            risk = calculate_var_metrics(yield_df["10Y"].pct_change(), confidence_level, 10)
+            if risk:
+                r1, r2, r3, r4 = st.columns(4)
+                r1.metric("Historical VaR", f"{risk['VaR_Historical']:.4f}")
+                r2.metric("Parametric VaR", f"{risk['VaR_Parametric']:.4f}")
+                r3.metric("Cornish-Fisher VaR", f"{risk['VaR_CornishFisher']:.4f}")
+                r4.metric("CVaR", f"{risk['CVaR']:.4f}")
+                st.markdown(
+                    """
+                    <div class="note-box">
+                    <b>Risk Metrics Explanation</b><br><br>
+                    <b>Historical VaR</b> estimates the loss threshold using empirical return history.<br>
+                    <b>Parametric VaR</b> assumes returns are approximately normal and scales risk using mean and volatility.<br>
+                    <b>Cornish-Fisher VaR</b> adjusts for skewness and kurtosis, helping users see whether tail shape matters.<br>
+                    <b>CVaR</b> measures the average loss beyond VaR and is more informative for tail-risk management.<br><br>
+                    Users should compare these metrics side by side: wide divergence suggests non-normal risk, asymmetric shocks, or unstable volatility.
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    with top_tabs[3]:
+        scenario_name = st.selectbox("Select Scenario", list(scenarios.keys()))
+        st.plotly_chart(chart_scenario(scenarios[scenario_name], scenario_name), use_container_width=True)
+        scenario_notes = {
+            "Bull Steepener": "Short and intermediate yields decline modestly, while the long end declines more. This is usually associated with falling inflation expectations, softer growth, or a rally led by duration.",
+            "Bear Flattener": "Front-end yields rise more than the long end. This often reflects hawkish central-bank policy or repricing of the policy path.",
+            "Recession Case": "Broad rally across the curve, with the strongest fall at the short end. This scenario emphasizes defensive allocation and recession hedging.",
+            "Policy Easing": "Short-end yields fall sharply after expected policy cuts, while the long end reacts less. This helps users isolate the transmission of a central-bank easing cycle."
+        }
+        st.markdown(f'<div class="note-box"><b>{scenario_name}</b><br><br>{scenario_notes[scenario_name]}</div>', unsafe_allow_html=True)
+
+        # historical scenario comparison table
+        hist_table = scenarios[scenario_name].copy()
+        hist_table["Change"] = hist_table["Scenario"] - hist_table["Current"]
+        hist_table.index.name = "Tenor"
+        st.dataframe(hist_table.round(4), use_container_width=True)
+
+    with top_tabs[4]:
+        rr_tabs = st.tabs(["NBER Chart", "Hit Ratio", "False Positives", "Current Inversion vs History", "Lead-Time Summary"])
         with rr_tabs[0]:
-            if '10Y' in yield_df.columns:
-                risk = calculate_var_metrics(yield_df['10Y'].pct_change(), confidence_level, 10)
-                if risk:
-                    r1, r2, r3, r4 = st.columns(4)
-                    r1.metric('Historical VaR', f"{risk['VaR_Historical']:.4f}")
-                    r2.metric('Parametric VaR', f"{risk['VaR_Parametric']:.4f}")
-                    r3.metric('Cornish-Fisher VaR', f"{risk['VaR_CornishFisher']:.4f}")
-                    r4.metric('CVaR', f"{risk['CVaR']:.4f}")
-        with rr_tabs[1]:
             fig = go.Figure()
-            if '10Y-2Y' in spreads.columns:
-                fig.add_trace(go.Scatter(x=spreads.index, y=spreads['10Y-2Y'], mode='lines', name='10Y-2Y', line=dict(color=COLORS['negative'], width=2)))
-            fig.add_hline(y=0, line_dash='dash', line_color=COLORS['muted'])
+            if "10Y-2Y" in spreads.columns:
+                fig.add_trace(go.Scatter(x=spreads.index, y=spreads["10Y-2Y"], mode="lines", name="10Y-2Y", line=dict(color=COLORS["negative"], width=2)))
+            fig.add_hline(y=0, line_dash="dash", line_color=COLORS["muted"])
             add_recession_bands(fig, recessions)
-            st.plotly_chart(create_chart_layout(fig, '10Y-2Y vs NBER Recessions', 'bps', 500), use_container_width=True)
-            if recessions:
-                st.dataframe(pd.DataFrame(recessions), use_container_width=True, hide_index=True)
+            st.plotly_chart(create_chart_layout(fig, "NBER Recession Overlay | 10Y-2Y Spread", "bps", 500), use_container_width=True)
+        with rr_tabs[1]:
+            hit_df = pd.DataFrame([hit_stats])
+            st.dataframe(hit_df.round(4), use_container_width=True, hide_index=True)
+            st.markdown('<div class="note-box"><b>Hit Ratio</b> shows how many inversion signals were eventually followed by recessions in this sample.</div>', unsafe_allow_html=True)
         with rr_tabs[2]:
-            if inversions:
-                st.dataframe(pd.DataFrame(inversions), use_container_width=True, hide_index=True)
-            if lead_times:
-                st.dataframe(pd.DataFrame(lead_times), use_container_width=True, hide_index=True)
+            false_df = pd.DataFrame([{
+                "Signals": hit_stats["Signals"],
+                "Matches": hit_stats["Matches"],
+                "FalsePositives": hit_stats["Signals"] - hit_stats["Matches"],
+                "FalsePositiveRate": hit_stats["FalsePositiveRate"],
+            }])
+            st.dataframe(false_df.round(4), use_container_width=True, hide_index=True)
+            st.markdown('<div class="note-box"><b>False Positives</b> matter because not every inversion becomes a recession immediately. Users should evaluate both hit quality and timing dispersion.</div>', unsafe_allow_html=True)
         with rr_tabs[3]:
-            if arb:
-                a1, a2, a3 = st.columns(3)
-                a1.metric('Mean Abs Error', f"{arb['mean_abs_error']:.4f}")
-                a2.metric('Max Abs Error', f"{arb['max_abs_error']:.4f}")
-                a3.metric('Mispriced Tenors', f"{arb['mispriced_count']}")
-                if not arb['mispriced_table'].empty:
-                    st.dataframe(arb['mispriced_table'].round(4), use_container_width=True)
-                else:
-                    st.info('No material mispricing detected under current threshold.')
-
-    with executive_tabs[3]:
-        fx_tabs = st.tabs(["Forecasting", "Export"])
-        with fx_tabs[0]:
-            if forecast_df is not None and not forecast_df.empty:
-                selected = st.multiselect('Select tenors', selected_cols, default=['2Y', '10Y'] if {'2Y', '10Y'}.issubset(set(selected_cols)) else selected_cols[:2])
-                fig = go.Figure()
-                for col in selected:
-                    fig.add_trace(go.Scatter(x=yield_df.index[-200:], y=yield_df[col].tail(200), mode='lines', name=f'{col} history', line=dict(width=1.7)))
-                    fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df[col], mode='lines', name=f'{col} forecast', line=dict(width=2, dash='dash')))
-                st.plotly_chart(create_chart_layout(fig, 'Linear Trend Yield Forecast', 'Yield (%)', 500), use_container_width=True)
-                st.dataframe(forecast_df.head(10).round(3), use_container_width=True)
-            else:
-                st.warning('Insufficient data for forecasting.')
-        with fx_tabs[1]:
-            st.download_button('Download Yield Data (CSV)', yield_df.to_csv().encode('utf-8'), f"yield_data_{datetime.now():%Y%m%d_%H%M%S}.csv", 'text/csv')
-            st.download_button('Download Spread Data (CSV)', spreads.to_csv().encode('utf-8'), f"spreads_{datetime.now():%Y%m%d_%H%M%S}.csv", 'text/csv')
-            if dynamic_params is not None and not dynamic_params.empty:
-                st.download_button('Download Dynamic Parameters', dynamic_params.to_csv(index=False).encode('utf-8'), f"dynamic_params_{datetime.now():%Y%m%d_%H%M%S}.csv", 'text/csv')
-            if pca_risk:
-                st.download_button('Download PCA Loadings', pca_risk['loadings'].to_csv().encode('utf-8'), f"pca_loadings_{datetime.now():%Y%m%d_%H%M%S}.csv", 'text/csv')
+            st.dataframe(current_inversion_vs_history(spreads, inversions).round(4), use_container_width=True, hide_index=True)
+        with rr_tabs[4]:
             if lead_times:
-                st.download_button('Download Lead Times', pd.DataFrame(lead_times).to_csv(index=False).encode('utf-8'), f"lead_times_{datetime.now():%Y%m%d_%H%M%S}.csv", 'text/csv')
+                st.dataframe(pd.DataFrame(lead_times).round(4), use_container_width=True, hide_index=True)
+            else:
+                st.info("No lead-time episodes were identified in the current sample alignment.")
+            st.markdown('<div class="note-box"><b>Lead-Time Summary</b> helps users compare the current inversion with past episodes and estimate how much time historically elapsed before recession onset.</div>', unsafe_allow_html=True)
 
-    st.markdown('---')
+    with top_tabs[5]:
+        ticker = st.selectbox("Select OHLC Instrument", list(YAHOO_TICKERS.keys()), format_func=lambda x: f"{x} | {YAHOO_TICKERS[x]}")
+        ohlc_df = ohlc_data.get(ticker)
+        left, right = st.columns([1.15, 1])
+        with left:
+            fig_ohlc = chart_ohlc(ohlc_df, ticker)
+            if fig_ohlc:
+                st.plotly_chart(fig_ohlc, use_container_width=True)
+        with right:
+            fig_ta = chart_technical_panels(ohlc_df, ticker)
+            if fig_ta:
+                st.plotly_chart(fig_ta, use_container_width=True)
+        st.markdown(
+            """
+            <div class="note-box">
+            <b>Technical Layer Explanation</b><br><br>
+            OHLC and indicator panels are provided as a supplemental tactical layer rather than the main macro signal engine.
+            <b>RSI</b> highlights overbought / oversold momentum,
+            <b>MACD</b> helps users identify trend shifts,
+            and <b>Bollinger Bands</b> show volatility envelopes around price behavior.
+            For institutional use, this layer is best interpreted alongside regime, curve shape, and recession diagnostics.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with top_tabs[6]:
+        export_tabs = st.tabs(["Download Data", "Requirements", "Run Instructions", "Streamlit Cloud"])
+        with export_tabs[0]:
+            st.download_button("Download Yield Data (CSV)", yield_df.to_csv().encode("utf-8"), f"yield_data_{datetime.now():%Y%m%d_%H%M%S}.csv", "text/csv")
+            st.download_button("Download Spread Data (CSV)", spreads.to_csv().encode("utf-8"), f"spreads_{datetime.now():%Y%m%d_%H%M%S}.csv", "text/csv")
+            if dynamic_params is not None and not dynamic_params.empty:
+                st.download_button("Download Dynamic Parameters", dynamic_params.to_csv(index=False).encode("utf-8"), f"dynamic_params_{datetime.now():%Y%m%d_%H%M%S}.csv", "text/csv")
+            if pca_risk:
+                st.download_button("Download PCA Loadings", pca_risk["loadings"].to_csv().encode("utf-8"), f"pca_loadings_{datetime.now():%Y%m%d_%H%M%S}.csv", "text/csv")
+            if lead_times:
+                st.download_button("Download Lead Times", pd.DataFrame(lead_times).to_csv(index=False).encode("utf-8"), f"lead_times_{datetime.now():%Y%m%d_%H%M%S}.csv", "text/csv")
+        with export_tabs[1]:
+            st.code(
+                "streamlit\npandas\nnumpy\nplotly\nrequests\nyfinance\nscipy\nscikit-learn",
+                language="text",
+            )
+        with export_tabs[2]:
+            st.code(
+                "pip install -r requirements.txt\nstreamlit run yield_curve_v35_5_full_fold_in_final.py",
+                language="bash",
+            )
+        with export_tabs[3]:
+            st.markdown(
+                """
+                <div class="note-box">
+                <b>Streamlit Cloud Compatibility</b><br><br>
+                1. Upload the app file and a <code>requirements.txt</code> file.<br>
+                2. Set the main file to <code>yield_curve_v35_5_full_fold_in_final.py</code>.<br>
+                3. Launch the app, then enter your FRED API key inside the UI.<br>
+                4. If compute feels slow, reduce rolling window length and forecast horizon.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("---")
     st.markdown(
-        f"<div style='text-align:center; color:{COLORS['muted']}; font-size:0.72rem;'>Institutional v34 refactor • FRED data • executive and research layers separated • generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</div>",
+        f"<div style='text-align:center; color:{COLORS['muted']}; font-size:0.72rem;'>Full fold-in final version • lighter institutional design • generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</div>",
         unsafe_allow_html=True,
     )
-
 
 if __name__ == "__main__":
     main()
