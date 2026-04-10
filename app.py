@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore")
 
 # =============================================================================
 # DYNAMIC QUANTITATIVE ANALYSIS MODEL - INSTITUTIONAL PLATFORM
-# FULLY FIXED VERSION - All errors resolved
+# COMPLETE FULL VERSION - TÜM ÖZELLİKLERLE
 # =============================================================================
 
 st.set_page_config(
@@ -263,7 +263,7 @@ class RuntimeConfig:
 CFG = RuntimeConfig()
 
 # =============================================================================
-# DATA LAYER - FIXED
+# DATA LAYER
 # =============================================================================
 
 def fred_request(api_key: str, series_id: str) -> Optional[pd.Series]:
@@ -343,10 +343,8 @@ def fetch_volatility_data() -> Optional[pd.DataFrame]:
                     data[ticker] = series
         except Exception:
             continue
-    
     if not data:
         return None
-    
     try:
         df_result = pd.DataFrame(data)
         if df_result is not None and not df_result.empty:
@@ -355,7 +353,6 @@ def fetch_volatility_data() -> Optional[pd.DataFrame]:
                 return df_result
     except Exception:
         return None
-    
     return None
 
 @st.cache_data(ttl=CFG.cache_ttl_sec, show_spinner=False)
@@ -370,10 +367,8 @@ def fetch_correlation_data() -> Optional[pd.DataFrame]:
                     data[name] = series
         except Exception:
             continue
-    
     if not data:
         return None
-    
     try:
         df_result = pd.DataFrame(data)
         if df_result is not None and not df_result.empty:
@@ -382,11 +377,10 @@ def fetch_correlation_data() -> Optional[pd.DataFrame]:
                 return df_result
     except Exception:
         return None
-    
     return None
 
 # =============================================================================
-# ENHANCED TECHNICAL INDICATORS - FIXED
+# TECHNICAL INDICATORS
 # =============================================================================
 
 def sma(x: pd.Series, n: int) -> pd.Series:
@@ -413,7 +407,6 @@ def bb(x: pd.Series, n: int = 20, k: float = 2.0):
     return mid + k * sd, mid, mid - k * sd
 
 def atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
-    """Average True Range"""
     try:
         high = df['High']
         low = df['Low']
@@ -427,7 +420,6 @@ def atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
         return pd.Series(index=df.index, dtype=float)
 
 def stochastic_oscillator(df: pd.DataFrame, n: int = 14) -> Tuple[pd.Series, pd.Series]:
-    """Stochastic Oscillator"""
     try:
         low_n = df['Low'].rolling(n).min()
         high_n = df['High'].rolling(n).max()
@@ -438,12 +430,10 @@ def stochastic_oscillator(df: pd.DataFrame, n: int = 14) -> Tuple[pd.Series, pd.
         return pd.Series(index=df.index, dtype=float), pd.Series(index=df.index, dtype=float)
 
 def volume_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Volume analysis indicators - FIXED"""
     out = df.copy()
     if 'Volume' in df.columns and df['Volume'] is not None:
         try:
             out['Volume_SMA'] = df['Volume'].rolling(20).mean()
-            # Avoid division by zero
             out['Volume_Ratio'] = df['Volume'] / out['Volume_SMA'].replace(0, np.nan)
             out['Volume_Ratio'] = out['Volume_Ratio'].fillna(1.0)
         except Exception:
@@ -455,12 +445,9 @@ def volume_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Add comprehensive technical indicators - FIXED"""
     if df is None or df.empty:
         return df
-    
     out = df.copy()
-    
     try:
         out["SMA_20"] = sma(out["Close"], 20)
         out["SMA_50"] = sma(out["Close"], 50)
@@ -477,44 +464,34 @@ def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         out["Stoch_D"] = d
         out = volume_indicators(out)
     except Exception as e:
-        st.warning(f"Technical indicator calculation warning: {str(e)}")
-        # Fill with default values
         for col in ["SMA_20", "SMA_50", "SMA_200", "EMA_12", "EMA_26", "RSI", "RSI_21", 
                     "MACD", "MACD_Signal", "MACD_Hist", "BB_Upper", "BB_Middle", "BB_Lower", 
                     "ATR", "Stoch_K", "Stoch_D", "Volume_SMA", "Volume_Ratio"]:
             if col not in out.columns:
                 out[col] = np.nan
-    
     return out
 
 def generate_technical_signals(df: pd.DataFrame) -> pd.DataFrame:
-    """Generate comprehensive technical trading signals"""
     signals = pd.DataFrame(index=df.index)
-    
     try:
         if 'RSI' in df.columns:
             signals['RSI_Oversold'] = df['RSI'] < 30
             signals['RSI_Overbought'] = df['RSI'] > 70
-        
         if 'MACD' in df.columns and 'MACD_Signal' in df.columns:
             signals['MACD_Bullish'] = (df['MACD'] > df['MACD_Signal']) & (df['MACD'].shift(1) <= df['MACD_Signal'].shift(1))
             signals['MACD_Bearish'] = (df['MACD'] < df['MACD_Signal']) & (df['MACD'].shift(1) >= df['MACD_Signal'].shift(1))
-        
         if 'SMA_20' in df.columns and 'SMA_50' in df.columns:
             signals['Golden_Cross'] = (df['SMA_20'] > df['SMA_50']) & (df['SMA_20'].shift(1) <= df['SMA_50'].shift(1))
             signals['Death_Cross'] = (df['SMA_20'] < df['SMA_50']) & (df['SMA_20'].shift(1) >= df['SMA_50'].shift(1))
-        
         if 'Close' in df.columns and 'BB_Lower' in df.columns and 'BB_Upper' in df.columns:
             signals['BB_Oversold'] = df['Close'] < df['BB_Lower']
             signals['BB_Overbought'] = df['Close'] > df['BB_Upper']
-        
         if 'Stoch_K' in df.columns and 'Stoch_D' in df.columns:
             signals['Stoch_Oversold'] = df['Stoch_K'] < 20
             signals['Stoch_Overbought'] = df['Stoch_K'] > 80
             signals['Stoch_Bullish'] = (df['Stoch_K'] > df['Stoch_D']) & (df['Stoch_K'].shift(1) <= df['Stoch_D'].shift(1))
     except Exception:
         pass
-    
     return signals
 
 # =============================================================================
@@ -528,11 +505,9 @@ class MonteCarloSimulator:
         dt = 1/252
         paths = np.zeros((simulations, days))
         paths[:, 0] = initial_yield
-        
         for i in range(1, days):
             z = np.random.standard_normal(simulations)
             paths[:, i] = paths[:, i-1] * np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * z)
-        
         return paths
     
     @staticmethod
@@ -541,19 +516,16 @@ class MonteCarloSimulator:
         dt = 1/252
         paths = np.zeros((simulations, days))
         paths[:, 0] = initial_rate
-        
         for i in range(1, days):
             z = np.random.standard_normal(simulations)
             dr = kappa * (theta - paths[:, i-1]) * dt + sigma * np.sqrt(dt) * z
             paths[:, i] = paths[:, i-1] + dr
-        
         return paths
     
     @staticmethod
     def calculate_confidence_intervals(paths: np.ndarray, confidence: float = 0.95) -> Dict:
         lower_percentile = (1 - confidence) / 2 * 100
         upper_percentile = (1 + confidence) / 2 * 100
-        
         return {
             "mean": np.mean(paths, axis=0),
             "median": np.percentile(paths, 50, axis=0),
@@ -581,7 +553,6 @@ class MLForecastModel:
                 features.extend(yield_df[col].iloc[i-lags:i].values)
             X.append(features)
             y.append(yield_df.iloc[i+1].values)
-        
         if not X:
             return np.array([]), np.array([])
         return np.array(X), np.array(y)
@@ -590,21 +561,16 @@ class MLForecastModel:
     def train_random_forest(X: np.ndarray, y: np.ndarray, test_size: float = 0.2) -> Dict:
         if len(X) == 0:
             return {}
-        
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
-        
         model = RandomForestRegressor(n_estimators=50, max_depth=8, random_state=42, n_jobs=-1)
         model.fit(X_train, y_train)
-        
         y_pred = model.predict(X_test)
         rmse = np.sqrt(mean_squared_error(y_test, y_pred))
         r2 = r2_score(y_test, y_pred)
-        
         feature_importance = pd.DataFrame({
             'feature': [f'feature_{i}' for i in range(X.shape[1])],
             'importance': model.feature_importances_
         }).sort_values('importance', ascending=False)
-        
         return {
             "model": model,
             "rmse": rmse,
@@ -623,17 +589,14 @@ class BacktestEngine:
         if strategy_type == "curve_inversion":
             if "10Y-2Y" not in spreads.columns or "10Y" not in yield_df.columns:
                 return {}
-            
             signals = spreads["10Y-2Y"] < 0
             returns = yield_df["10Y"].pct_change().shift(-1)
             strategy_returns = signals.shift(1) * returns
             cumulative_strategy = (1 + strategy_returns.fillna(0)).cumprod()
-            
             if strategy_returns.std() == 0:
                 sharpe = 0
             else:
                 sharpe = strategy_returns.mean() / strategy_returns.std() * np.sqrt(252)
-            
             return {
                 "strategy_name": "Curve Inversion Strategy",
                 "cumulative_returns": cumulative_strategy,
@@ -652,9 +615,7 @@ class VolatilityAnalyzer:
     def calculate_volatility_regime(vix: pd.Series) -> Dict:
         if vix is None or len(vix) == 0:
             return {"current_vix": 0, "regime": "N/A", "outlook": "Data unavailable"}
-        
         current_vix = vix.iloc[-1]
-        
         if current_vix < 12:
             regime = "EXTREME COMPLACENCY"
             outlook = "High risk of volatility spike"
@@ -673,9 +634,7 @@ class VolatilityAnalyzer:
         else:
             regime = "EXTREME VOLATILITY"
             outlook = "Crisis conditions"
-        
         percentile = (vix < current_vix).mean() if len(vix) > 0 else 0.5
-        
         return {
             "current_vix": current_vix,
             "regime": regime,
@@ -716,7 +675,6 @@ def compute_spreads(yield_df: pd.DataFrame) -> pd.DataFrame:
 def classify_regime(spreads: pd.DataFrame, yield_df: pd.DataFrame) -> Tuple[str, str]:
     if "10Y-2Y" not in spreads.columns or spreads.empty:
         return "Data Loading", "Please wait for data to load"
-    
     spread = spreads["10Y-2Y"].iloc[-1]
     if np.isfinite(spread) and spread < 0:
         return "Risk-off / Recession Watch", "Curve inversion signals defensive macro regime"
@@ -727,7 +685,6 @@ def classify_regime(spreads: pd.DataFrame, yield_df: pd.DataFrame) -> Tuple[str,
 def recession_probability_proxy(spreads: pd.DataFrame, yield_df: pd.DataFrame) -> float:
     if "10Y-2Y" not in spreads.columns or "10Y" not in yield_df.columns:
         return 0.5
-    
     score = np.clip((-spreads["10Y-2Y"].iloc[-1]) / 100, 0, 1.5)
     score += np.clip((yield_df["10Y"].iloc[-1] - 4.5) / 3.0, 0, 1.0)
     return float(1 / (1 + np.exp(-2.2 * (score - 0.8))))
@@ -760,40 +717,36 @@ class NelsonSiegelModel:
     def fit_ns(maturities: np.ndarray, yields_: np.ndarray):
         if len(maturities) == 0 or len(yields_) == 0:
             return None
-            
         def objective(params):
             fitted = NelsonSiegelModel.nelson_siegel(maturities, *params)
             return np.sum((yields_ - fitted) ** 2)
-        
         bounds = [(yields_.min() - 2, yields_.max() + 2), (-15, 15), (-15, 15), (0.01, 5)]
         best = None
         best_fun = np.inf
-        
         for _ in range(5):
             x0 = [np.random.uniform(a, b) for a, b in bounds]
             res = minimize(objective, x0=x0, bounds=bounds, method="L-BFGS-B")
             if res.success and res.fun < best_fun:
                 best, best_fun = res, res.fun
-        
         if best is None:
             return None
-        
         fitted = NelsonSiegelModel.nelson_siegel(maturities, *best.x)
         sse = np.sum((yields_ - fitted) ** 2)
         sst = np.sum((yields_ - np.mean(yields_)) ** 2)
-        
         return {
             "params": best.x,
+            "fitted_values": fitted,
             "rmse": float(np.sqrt(np.mean((yields_ - fitted) ** 2))),
             "r_squared": float(1 - sse / sst) if sst > 0 else np.nan,
         }
 
 # =============================================================================
-# VISUALIZATION FUNCTIONS
+# VISUALIZATION FUNCTIONS - FIXED
 # =============================================================================
 
 def create_chart_layout(fig: go.Figure, title: str, y_title: str = None, 
                         height: int = 460, x_title: str = "Date") -> go.Figure:
+    """Apply professional chart styling - FIXED VERSION"""
     fig.update_layout(
         template="plotly_white",
         paper_bgcolor=COLORS["surface"],
@@ -803,10 +756,39 @@ def create_chart_layout(fig: go.Figure, title: str, y_title: str = None,
         margin=dict(l=60, r=30, t=80, b=50),
         hovermode="x unified",
         height=height,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        xaxis=dict(title=x_title, gridcolor=COLORS["grid"], showgrid=True),
-        yaxis=dict(title=y_title, gridcolor=COLORS["grid"], showgrid=True),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
+    # X-axis configuration
+    fig.update_xaxes(
+        title=dict(text=x_title, font=dict(size=13, weight="bold")),
+        tickfont=dict(size=11),
+        gridcolor=COLORS["grid"],
+        gridwidth=1,
+        showgrid=True,
+        zeroline=False
+    )
+    # Y-axis configuration
+    if y_title:
+        fig.update_yaxes(
+            title=dict(text=y_title, font=dict(size=13, weight="bold")),
+            tickfont=dict(size=11),
+            gridcolor=COLORS["grid"],
+            gridwidth=1,
+            showgrid=True,
+            zeroline=True,
+            zerolinecolor=COLORS["grid_dark"],
+            zerolinewidth=1
+        )
+    else:
+        fig.update_yaxes(
+            tickfont=dict(size=11),
+            gridcolor=COLORS["grid"],
+            gridwidth=1,
+            showgrid=True,
+            zeroline=True,
+            zerolinecolor=COLORS["grid_dark"],
+            zerolinewidth=1
+        )
     return fig
 
 def add_recession_bands(fig: go.Figure, recessions: List[dict]) -> go.Figure:
@@ -844,7 +826,6 @@ def chart_monte_carlo(initial_yield: float, simulation_results: Dict,
                       horizon_days: int) -> go.Figure:
     fig = go.Figure()
     x_axis = np.arange(horizon_days)
-    
     fig.add_trace(go.Scatter(
         x=x_axis, y=simulation_results["upper_ci"],
         fill=None, mode='lines', line=dict(color='rgba(0,0,0,0)'),
@@ -857,25 +838,21 @@ def chart_monte_carlo(initial_yield: float, simulation_results: Dict,
         line=dict(color='rgba(0,0,0,0)'),
         name='95% Confidence Interval'
     ))
-    
     fig.add_trace(go.Scatter(
         x=x_axis, y=simulation_results["mean"],
         mode='lines', name='Mean Path',
         line=dict(color=COLORS["accent"], width=2.5)
     ))
-    
     fig.add_trace(go.Scatter(
         x=[0], y=[initial_yield],
         mode='markers', name='Current Yield',
         marker=dict(size=12, color=COLORS["positive"], symbol='star')
     ))
-    
     return create_chart_layout(fig, "Monte Carlo Simulation - 10Y Yield Paths", 
                                "Yield (%)", 500, "Trading Days Ahead")
 
 def chart_backtest_results(backtest_results: Dict) -> go.Figure:
     fig = go.Figure()
-    
     if "cumulative_returns" in backtest_results and backtest_results["cumulative_returns"] is not None:
         fig.add_trace(go.Scatter(
             x=backtest_results["cumulative_returns"].index,
@@ -884,7 +861,6 @@ def chart_backtest_results(backtest_results: Dict) -> go.Figure:
             name=backtest_results.get("strategy_name", "Strategy"),
             line=dict(color=COLORS["accent"], width=2.5)
         ))
-    
     return create_chart_layout(fig, "Backtest Performance", "Cumulative Return", 500)
 
 def chart_volatility_dashboard(vix_data: pd.Series, vol_regime: Dict) -> go.Figure:
@@ -892,21 +868,17 @@ def chart_volatility_dashboard(vix_data: pd.Series, vol_regime: Dict) -> go.Figu
         fig = go.Figure()
         fig.add_annotation(text="Volatility data unavailable", x=0.5, y=0.5, showarrow=False)
         return fig
-    
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                         subplot_titles=("VIX - CBOE Volatility Index", "Vol of Vol (20-day)"),
                         vertical_spacing=0.15,
                         row_heights=[0.6, 0.4])
-    
     fig.add_trace(go.Scatter(
         x=vix_data.index, y=vix_data.values,
         mode='lines', name='VIX',
         line=dict(color=COLORS["warning"], width=2)
     ), row=1, col=1)
-    
     fig.add_hline(y=20, line_dash="dash", line_color="orange", row=1, col=1)
     fig.add_hline(y=15, line_dash="dash", line_color="green", row=1, col=1)
-    
     vol_of_vol = VolatilityAnalyzer.calculate_vol_of_vol(vix_data)
     if len(vol_of_vol) > 0:
         fig.add_trace(go.Scatter(
@@ -914,18 +886,16 @@ def chart_volatility_dashboard(vix_data: pd.Series, vol_regime: Dict) -> go.Figu
             mode='lines', name='Vol of Vol',
             line=dict(color=COLORS["accent"], width=2)
         ), row=2, col=1)
-    
     fig.update_yaxes(title_text="VIX", row=1, col=1)
     fig.update_yaxes(title_text="Vol of Vol", row=2, col=1)
-    
-    return create_chart_layout(fig, f"Volatility Dashboard | VIX: {vol_regime.get('current_vix', 0):.2f}", height=600)
+    fig.update_layout(height=600)
+    return fig
 
 def chart_correlation_heatmap(correlation_matrix: pd.DataFrame) -> go.Figure:
     if correlation_matrix.empty:
         fig = go.Figure()
         fig.add_annotation(text="Correlation data unavailable", x=0.5, y=0.5, showarrow=False)
         return fig
-    
     fig = go.Figure(data=go.Heatmap(
         z=correlation_matrix.values,
         x=correlation_matrix.columns,
@@ -937,7 +907,6 @@ def chart_correlation_heatmap(correlation_matrix: pd.DataFrame) -> go.Figure:
         textfont={"size": 10},
         colorbar=dict(title="Correlation")
     ))
-    
     fig.update_layout(title="Cross-Asset Correlation Matrix", height=500, width=700)
     return fig
 
@@ -968,7 +937,6 @@ def chart_ohlc(ohlc_df: pd.DataFrame, ticker: str) -> Optional[go.Figure]:
 def chart_technical_panels(ohlc_df: pd.DataFrame, ticker: str, signals_df: pd.DataFrame) -> Optional[go.Figure]:
     if ohlc_df is None or ohlc_df.empty:
         return None
-    
     fig = make_subplots(
         rows=3, cols=1, 
         shared_xaxes=True, 
@@ -980,13 +948,10 @@ def chart_technical_panels(ohlc_df: pd.DataFrame, ticker: str, signals_df: pd.Da
             "MACD - Trend & Momentum",
         ),
     )
-    
-    # Price panel
     fig.add_trace(go.Scatter(
         x=ohlc_df.index, y=ohlc_df["Close"], mode="lines", 
         name="Close Price", line=dict(color=COLORS["accent"], width=2.5)
     ), row=1, col=1)
-    
     if "BB_Upper" in ohlc_df.columns:
         fig.add_trace(go.Scatter(
             x=ohlc_df.index, y=ohlc_df["BB_Upper"], mode="lines", 
@@ -997,8 +962,6 @@ def chart_technical_panels(ohlc_df: pd.DataFrame, ticker: str, signals_df: pd.Da
             name="BB Lower (2σ)", line=dict(color=COLORS["muted"], width=1.2, dash="dash"),
             fill='tonexty', fillcolor=COLORS["band"]
         ), row=1, col=1)
-    
-    # RSI panel
     if "RSI" in ohlc_df.columns:
         fig.add_trace(go.Scatter(
             x=ohlc_df.index, y=ohlc_df["RSI"], mode="lines", 
@@ -1008,8 +971,6 @@ def chart_technical_panels(ohlc_df: pd.DataFrame, ticker: str, signals_df: pd.Da
                       line_width=1.5, row=2, col=1, annotation_text="Overbought (70)")
         fig.add_hline(y=30, line_dash="dash", line_color=COLORS["positive"], 
                       line_width=1.5, row=2, col=1, annotation_text="Oversold (30)")
-    
-    # MACD panel
     if "MACD" in ohlc_df.columns:
         fig.add_trace(go.Scatter(
             x=ohlc_df.index, y=ohlc_df["MACD"], mode="lines", 
@@ -1020,13 +981,12 @@ def chart_technical_panels(ohlc_df: pd.DataFrame, ticker: str, signals_df: pd.Da
             name="Signal Line", line=dict(color=COLORS["negative"], width=2)
         ), row=3, col=1)
         fig.add_hline(y=0, line_dash="solid", line_color=COLORS["text_secondary"], row=3, col=1)
-    
     fig.update_xaxes(title_text="Date", row=3, col=1)
     fig.update_yaxes(title_text="Price", row=1, col=1)
     fig.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
     fig.update_yaxes(title_text="MACD", row=3, col=1)
-    
-    return create_chart_layout(fig, f"Technical Analysis Dashboard | {ticker}", height=800)
+    fig.update_layout(height=800)
+    return fig
 
 # =============================================================================
 # UI HELPERS
@@ -1087,7 +1047,6 @@ def main() -> None:
     with st.sidebar:
         st.markdown("### 🎛️ Control Tower")
         st.caption("Advanced Quantitative Analytics Platform")
-        
         if st.button("🔄 Refresh Data", use_container_width=True):
             st.cache_data.clear()
             keep_key = st.session_state.api_key
@@ -1096,7 +1055,6 @@ def main() -> None:
             st.session_state.api_key = keep_key
             st.session_state.api_key_validated = True
             st.rerun()
-        
         st.markdown("---")
         st.markdown("#### Model Parameters")
         rolling_years = st.slider("Rolling window (years)", 2, 10, 5)
@@ -1112,7 +1070,6 @@ def main() -> None:
             recession_series = fetch_recession_data(st.session_state.api_key)
             volatility_df = fetch_volatility_data()
             correlation_df = fetch_correlation_data()
-            
             ohlc_data = {}
             for ticker in YAHOO_TICKERS.keys():
                 try:
@@ -1121,14 +1078,11 @@ def main() -> None:
                         df_with_indicators = add_technical_indicators(df)
                         if df_with_indicators is not None and not df_with_indicators.empty:
                             ohlc_data[ticker] = df_with_indicators
-                except Exception as e:
-                    st.warning(f"Could not load {ticker}: {str(e)}")
+                except Exception:
                     continue
-        
         if yield_df is None:
             st.error("Failed to fetch FRED data. Please check your API key and try again.")
             st.stop()
-        
         st.session_state.yield_data = yield_df
         st.session_state.recession_data = recession_series
         st.session_state.volatility_data = volatility_df
@@ -1209,7 +1163,6 @@ def main() -> None:
                 add_recession_bands(fig_spread, recessions)
                 st.plotly_chart(create_chart_layout(fig_spread, "10Y-2Y Spread History", 
                                                    "Basis Points", 400), use_container_width=True)
-        
         with col2:
             fig_yield = go.Figure()
             fig_yield.add_trace(go.Scatter(x=yield_df.index, y=yield_df["10Y"], 
@@ -1223,42 +1176,34 @@ def main() -> None:
         st.subheader("🎲 Monte Carlo Simulation")
         st.markdown('<div class="note-box">Simulates 1,000+ potential paths for 10Y yields.</div>', 
                    unsafe_allow_html=True)
-        
         if st.button("Run Monte Carlo Simulation", use_container_width=True):
             with st.spinner(f"Running {mc_simulations} simulations..."):
                 initial_yield = current_10y if not np.isnan(current_10y) else 4.0
                 mu = yield_df["10Y"].pct_change().mean() * 252 if len(yield_df) > 1 else 0
                 sigma = yield_df["10Y"].pct_change().std() * np.sqrt(252) if len(yield_df) > 1 else 0.1
-                
                 paths = MonteCarloSimulator.simulate_geometric_brownian_motion(
                     initial_yield, mu, sigma, forecast_horizon, mc_simulations
                 )
                 sim_results = MonteCarloSimulator.calculate_confidence_intervals(paths, confidence_level)
                 var_estimate = MonteCarloSimulator.calculate_var_from_paths(paths, confidence_level)
-                
                 col_mc1, col_mc2, col_mc3 = st.columns(3)
                 col_mc1.metric("Expected Yield", f"{sim_results['mean'][-1]:.2f}%")
                 col_mc2.metric(f"{int(confidence_level*100)}% VaR", f"{var_estimate:.2f}%")
                 col_mc3.metric("Uncertainty Range", f"±{sim_results['std'][-1]:.2f}%")
-                
                 fig_mc = chart_monte_carlo(initial_yield, sim_results, forecast_horizon)
                 st.plotly_chart(fig_mc, use_container_width=True)
 
     # Tab 2: ML Forecasting
     with main_tabs[2]:
         st.subheader("🤖 Machine Learning Forecast")
-        
         if st.button("Train ML Model", use_container_width=True):
             with st.spinner("Training Random Forest..."):
                 X, y = MLForecastModel.prepare_features(yield_df[selected_cols], lags=ml_lags)
-                
                 if len(X) > 50:
                     ml_results = MLForecastModel.train_random_forest(X, y)
-                    
                     col_ml1, col_ml2 = st.columns(2)
                     col_ml1.metric("RMSE", f"{ml_results.get('rmse', 0)*100:.2f} bps")
                     col_ml2.metric("R² Score", f"{ml_results.get('r2', 0):.3f}")
-                    
                     st.success(f"Model trained on {len(X)} samples")
                 else:
                     st.warning(f"Insufficient data. Need 50+ samples, have {len(X)}.")
@@ -1266,17 +1211,14 @@ def main() -> None:
     # Tab 3: Backtesting
     with main_tabs[3]:
         st.subheader("📊 Strategy Backtesting")
-        
         if st.button("Run Backtest", use_container_width=True):
             with st.spinner("Running backtest..."):
                 backtest_results = BacktestEngine.backtest_curve_strategy(yield_df, spreads, "curve_inversion")
-                
                 if backtest_results:
-                    col_bt1, col_bt2, col_bt3, col_bt4 = st.columns(4)
+                    col_bt1, col_bt2, col_bt3 = st.columns(3)
                     col_bt1.metric("Strategy Return", f"{backtest_results.get('total_return', 0)*100:.1f}%")
                     col_bt2.metric("Sharpe Ratio", f"{backtest_results.get('sharpe_ratio', 0):.2f}")
                     col_bt3.metric("Win Rate", f"{backtest_results.get('win_rate', 0)*100:.1f}%")
-                    
                     fig_bt = chart_backtest_results(backtest_results)
                     st.plotly_chart(fig_bt, use_container_width=True)
                 else:
@@ -1285,17 +1227,13 @@ def main() -> None:
     # Tab 4: Volatility
     with main_tabs[4]:
         st.subheader("📉 Volatility Analytics")
-        
         if volatility_df is not None and not volatility_df.empty and "^VIX" in volatility_df.columns:
             vix_analysis = VolatilityAnalyzer.calculate_volatility_regime(volatility_df["^VIX"])
-            
             col_vix1, col_vix2, col_vix3 = st.columns(3)
             col_vix1.metric("Current VIX", f"{vix_analysis['current_vix']:.2f}")
             col_vix2.metric("Regime", vix_analysis['regime'])
             col_vix3.metric("Percentile", vix_analysis['vix_percentile'])
-            
             st.markdown(f'<div class="warning-box">📊 {vix_analysis["outlook"]}</div>', unsafe_allow_html=True)
-            
             fig_vix = chart_volatility_dashboard(volatility_df["^VIX"], vix_analysis)
             st.plotly_chart(fig_vix, use_container_width=True)
         else:
@@ -1304,12 +1242,10 @@ def main() -> None:
     # Tab 5: Correlations
     with main_tabs[5]:
         st.subheader("🔄 Cross-Asset Correlations")
-        
         if correlation_df is not None and not correlation_df.empty:
             all_assets = pd.concat([yield_df["10Y"], correlation_df], axis=1).dropna()
             all_assets.columns = ["10Y Yield"] + list(correlation_df.columns)
             corr_matrix = CorrelationAnalyzer.calculate_correlation_matrix(all_assets)
-            
             if not corr_matrix.empty:
                 fig_corr = chart_correlation_heatmap(corr_matrix)
                 st.plotly_chart(fig_corr, use_container_width=True)
@@ -1319,15 +1255,11 @@ def main() -> None:
     # Tab 6: Technical Analysis
     with main_tabs[6]:
         st.subheader("⚡ Technical Analysis")
-        
         ticker = st.selectbox("Select Instrument", list(YAHOO_TICKERS.keys()), 
                              format_func=lambda x: f"{x} | {YAHOO_TICKERS[x]}")
         ohlc_df = ohlc_data.get(ticker)
-        
         if ohlc_df is not None and not ohlc_df.empty:
             signals_df = generate_technical_signals(ohlc_df)
-            
-            # Current signals summary
             st.subheader("Current Technical Signals")
             sig_cols = st.columns(4)
             with sig_cols[0]:
@@ -1346,7 +1278,6 @@ def main() -> None:
                 vol_ratio = ohlc_df["Volume_Ratio"].iloc[-1] if "Volume_Ratio" in ohlc_df.columns else 1.0
                 vol_signal = "📈 High Volume" if vol_ratio > 1.5 else ("📉 Low Volume" if vol_ratio < 0.7 else "📊 Normal")
                 st.metric("Volume Ratio", f"{vol_ratio:.2f}x", vol_signal)
-            
             left, right = st.columns([1.15, 1])
             with left:
                 fig_ohlc = chart_ohlc(ohlc_df, ticker)
