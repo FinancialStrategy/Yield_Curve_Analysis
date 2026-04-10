@@ -1,224 +1,309 @@
-import yfinance as yf
+import streamlit as st
 import pandas as pd
 import numpy as np
-import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, date
+import yfinance as yf
+from datetime import datetime, timedelta, date
 import warnings
 warnings.filterwarnings('ignore')
 
-def safe_get_adj_close(data, ticker=None):
-    """Safely extract Adj Close from yfinance data regardless of structure"""
-    if data is None or data.empty:
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+# Treasury symbols
+TREASURY_SYMBOLS = {
+    '3M': '^IRX',   # 13-week Treasury Bill
+    '2Y': '^GB2Y',  # 2-year Treasury Note
+    '5Y': '^FVX',   # 5-year Treasury Note
+    '10Y': '^TNX',  # 10-year Treasury Note
+    '30Y': '^TYX'   # 30-year Treasury Bond
+}
+
+# Bond ETFs for backtesting
+BOND_ETFS = {
+    'TLT': '20+ Year Treasury Bond ETF',
+    'IEF': '7-10 Year Treasury Bond ETF',
+    'SHY': '1-3 Year Treasury Bond ETF',
+    'BND': 'Total Bond Market ETF'
+}
+
+# =============================================================================
+# DATA FETCHING FUNCTIONS
+# =============================================================================
+
+def fetch_yield_data(start_date=None, end_date=None):
+    """
+    Fetch yield curve data using yfinance
+    """
+    if start_date is None:
+        start_date = datetime.now() - timedelta(days=365)
+    if end_date is None:
+        end_date = datetime.now()
+    
+    yields_data = {}
+    
+    for maturity, symbol in TREASURY_SYMBOLS.items():
+        try:
+            data = yf.download(symbol, start=start_date, end=end_date, progress=False)
+            if not data.empty and 'Adj Close' in data.columns:
+                yields_data[maturity] = data['Adj Close']
+                
+                # Convert IRX (3M) from discount rate to yield
+                if maturity == '3M':
+                    yields_data[maturity] = yields_data[maturity].apply(lambda x: (100 - x) * 4 if pd.notna(x) else x)
+            else:
+                yields_data[maturity] = pd.Series(dtype='float64')
+        except Exception as e:
+            print(f"Could not fetch data for {maturity}: {e}")
+            yields_data[maturity] = pd.Series(dtype='float64')
+    
+    df = pd.DataFrame(yields_data)
+    df = df.fillna(method='ffill').fillna(method='bfill')
+    return df
+
+def fetch_etf_data(etf_symbol, start_date, end_date):
+    """Fetch ETF price data for backtesting"""
+    try:
+        data = yf.download(etf_symbol, start=start_date, end=end_date, progress=False)
+        if not data.empty and 'Adj Close' in data.columns:
+            return data['Adj Close']
+    except Exception as e:
+        print(f"Error fetching {etf_symbol}: {e}")
+    return pd.Series(dtype='float64')
+
+def fetch_vix_data(start_date, end_date):
+    """Fetch VIX data for volatility analysis"""
+    try:
+        data = yf.download('^VIX', start=start_date, end=end_date, progress=False)
+        if not data.empty and 'Adj Close' in data.columns:
+            return data['Adj Close']
+    except Exception as e:
+        print(f"Error fetching VIX: {e}")
+    return pd.Series(dtype='float64')
+
+# =============================================================================
+# YIELD CURVE ANALYSIS FUNCTIONS
+# =============================================================================
+
+def plot_yield_curve(df, selected_date):
+    """
+    Create interactive yield curve plot
+    """
+    available_dates = df.index
+    closest_date = available_dates[available_dates <= pd.Timestamp(selected_date)].max()
+    
+    if pd.isnull(closest_date):
         return None
     
-    if 'Adj Close' in data.columns:
-        if ticker and isinstance(data['Adj Close'], pd.DataFrame) and ticker in data['Adj Close'].columns:
-            return data['Adj Close'][ticker]
-        elif not isinstance(data['Adj Close'], pd.DataFrame):
-            return data['Adj Close']
-        else:
-            return data['Adj Close'].iloc[:, 0] if len(data['Adj Close'].columns) > 0 else None
+    maturities = {'3M': 0.25, '2Y': 2, '5Y': 5, '10Y': 10, '30Y': 30}
     
-    if 'Close' in data.columns:
-        if isinstance(data['Close'], pd.DataFrame):
-            return data['Close'].iloc[:, 0] if len(data['Close'].columns) > 0 else None
-        return data['Close']
+    fig = go.Figure()
     
-    if len(data.columns) == 1:
-        return data.iloc[:, 0]
+    # Current yield curve
+    current_yields = df.loc[closest_date]
+    valid_maturities = []
+    valid_yields = []
     
-    return None
+    for mat, year in maturities.items():
+        if mat in current_yields.index and pd.notna(current_yields[mat]):
+            valid_maturities.append(year)
+            valid_yields.append(current_yields[mat])
+    
+    fig.add_trace(go.Scatter(
+        x=valid_maturities,
+        y=valid_yields,
+        name=closest_date.strftime('%Y-%m-%d'),
+        line=dict(color='#2c5f8a', width=3),
+        mode='lines+markers',
+        marker=dict(size=8)
+    ))
+    
+    # Add historical comparison (1 month ago)
+    month_ago = closest_date - pd.DateOffset(months=1)
+    month_ago = available_dates[available_dates <= month_ago].max()
+    
+    if pd.notna(month_ago) and month_ago in df.index:
+        historical_yields = df.loc[month_ago]
+        valid_hist_maturities = []
+        valid_hist_yields = []
+        
+        for mat, year in maturities.items():
+            if mat in historical_yields.index and pd.notna(historical_yields[mat]):
+                valid_hist_maturities.append(year)
+                valid_hist_yields.append(historical_yields[mat])
+        
+        fig.add_trace(go.Scatter(
+            x=valid_hist_maturities,
+            y=valid_hist_yields,
+            name='1 Month Ago',
+            line=dict(color='#c17f3a', width=2, dash='dash'),
+            mode='lines+markers',
+            marker=dict(size=6)
+        ))
+    
+    fig.update_layout(
+        title='U.S. Treasury Yield Curve',
+        xaxis_title='Years to Maturity',
+        yaxis_title='Yield (%)',
+        template='plotly_white',
+        showlegend=True,
+        hovermode='x unified',
+        height=500
+    )
+    
+    return fig
 
-class YieldCurveStrategy:
-    """Advanced yield curve trading strategy with multiple signals"""
+def calculate_spreads(df):
+    """
+    Calculate various yield spreads
+    """
+    spreads = pd.DataFrame(index=df.index)
     
-    def __init__(self, start_date='2010-01-01', end_date=None):
-        self.start_date = start_date
-        # Set end date to yesterday if not specified
-        if end_date is None:
-            self.end_date = (date.today() - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-        else:
-            self.end_date = end_date
-        self.data = None
+    if '2Y' in df.columns and '10Y' in df.columns:
+        spreads['2s10s'] = df['10Y'] - df['2Y']
+    
+    if '3M' in df.columns and '10Y' in df.columns:
+        spreads['3m10y'] = df['10Y'] - df['3M']
+    
+    if '5Y' in df.columns and '30Y' in df.columns:
+        spreads['5s30s'] = df['30Y'] - df['5Y']
+    
+    return spreads
+
+def plot_spreads(spreads):
+    """
+    Create spread visualization
+    """
+    fig = go.Figure()
+    
+    colors = {'2s10s': '#2c5f8a', '3m10y': '#c17f3a', '5s30s': '#4a7c59'}
+    
+    for col in spreads.columns:
+        if not spreads[col].isna().all():
+            fig.add_trace(go.Scatter(
+                x=spreads.index,
+                y=spreads[col],
+                name=col,
+                line=dict(color=colors.get(col, '#666'), width=2),
+                fill='tozeroy',
+                fillcolor=f'rgba({",".join(map(str, colors.get(col, "#666").lstrip("#")[:6]))},0.1)' if col in colors else None
+            ))
+    
+    fig.add_hline(y=0, line_color='red', line_dash='dash', line_width=1.5)
+    fig.add_hline(y=-0.5, line_color='orange', line_dash='dot', line_width=1, 
+                  annotation_text="Inversion Warning", annotation_position="bottom right")
+    
+    fig.update_layout(
+        title='Treasury Yield Spreads',
+        xaxis_title='Date',
+        yaxis_title='Spread (%)',
+        template='plotly_white',
+        hovermode='x unified',
+        height=500
+    )
+    
+    return fig
+
+def calculate_forward_rates(df):
+    """
+    Calculate implied forward rates
+    """
+    forwards = pd.DataFrame(index=df.index)
+    maturities = {'3M': 0.25, '2Y': 2, '5Y': 5, '10Y': 10, '30Y': 30}
+    
+    for short_term, long_term in [('3M', '2Y'), ('2Y', '5Y'), ('5Y', '10Y'), ('10Y', '30Y')]:
+        if short_term in df.columns and long_term in df.columns:
+            r1 = maturities[short_term]
+            r2 = maturities[long_term]
+            
+            try:
+                forward_rate = (((1 + df[long_term] / 100) ** r2 / (1 + df[short_term] / 100) ** r1) ** (1 / (r2 - r1)) - 1) * 100
+                forwards[f'{short_term}→{long_term}'] = forward_rate
+            except Exception as e:
+                print(f"Could not calculate forward rate for {short_term}-{long_term}: {e}")
+    
+    return forwards
+
+# =============================================================================
+# TRADING STRATEGY FUNCTIONS
+# =============================================================================
+
+class YieldCurveTradingStrategy:
+    """Trading strategy based on yield curve signals"""
+    
+    def __init__(self, yields_df, spreads_df):
+        self.yields = yields_df
+        self.spreads = spreads_df
         self.signals = None
         self.results = None
-        
-    def fetch_data(self):
-        """Fetch treasury yields and bond ETF data"""
-        
-        # Treasury yields
-        tickers = {
-            '^IRX': '3M',
-            '^FVX': '5Y', 
-            '^TNX': '10Y',
-            '^TYX': '30Y'
-        }
-        
-        yields_data = {}
-        
-        for ticker, name in tickers.items():
-            try:
-                df = yf.download(ticker, start=self.start_date, end=self.end_date, progress=False)
-                price_series = safe_get_adj_close(df, ticker)
-                
-                if price_series is not None:
-                    price_series.index = pd.to_datetime(price_series.index)
-                    price_series.index = price_series.index.tz_localize(None)
-                    yields_data[name] = price_series
-            except Exception as e:
-                st.warning(f"Could not fetch data for {ticker}: {str(e)}")
-        
-        if not yields_data:
-            raise Exception("No yield data could be fetched")
-        
-        yields = pd.DataFrame(yields_data)
-        
-        # Bond ETFs
-        etfs = ['TLT', 'IEF', 'SHY', 'BND']
-        bond_data = {}
-        
-        for ticker in etfs:
-            try:
-                df = yf.download(ticker, start=self.start_date, end=self.end_date, progress=False)
-                price_series = safe_get_adj_close(df, ticker)
-                
-                if price_series is not None:
-                    price_series.index = pd.to_datetime(price_series.index)
-                    price_series.index = price_series.index.tz_localize(None)
-                    bond_data[ticker] = price_series
-            except Exception as e:
-                st.warning(f"Error fetching {ticker}: {str(e)}")
-        
-        if not bond_data:
-            raise Exception("No bond ETF data could be fetched")
-        
-        bond_prices = pd.DataFrame(bond_data)
-        
-        # VIX for volatility regime
-        try:
-            vix_df = yf.download('^VIX', start=self.start_date, end=self.end_date, progress=False)
-            vix_series = safe_get_adj_close(vix_df, '^VIX')
-            if vix_series is not None:
-                vix_series.index = pd.to_datetime(vix_series.index)
-                vix_series.index = vix_series.index.tz_localize(None)
-                common_idx = bond_prices.index.intersection(vix_series.index)
-                bond_prices['VIX'] = vix_series.reindex(common_idx)
-        except Exception as e:
-            print(f"VIX data unavailable: {e}")
-            
-        self.data = {'yields': yields, 'bond_prices': bond_prices}
-        return self
     
-    def calculate_spreads(self):
-        """Calculate various yield spreads"""
-        yields = self.data['yields']
+    def generate_signals(self, strategy_type='composite'):
+        """Generate trading signals based on yield curve"""
         
-        if yields.empty:
-            raise Exception("No yield data available for spread calculation")
+        signals = pd.DataFrame(index=self.spreads.index)
         
-        spreads = pd.DataFrame(index=yields.index)
-        
-        if '10Y' in yields.columns and '3M' in yields.columns:
-            common_idx = yields['10Y'].index.intersection(yields['3M'].index)
-            spreads['10Y-3M'] = yields['10Y'].loc[common_idx] - yields['3M'].loc[common_idx]
-        
-        if '10Y' in yields.columns and '5Y' in yields.columns:
-            common_idx = yields['10Y'].index.intersection(yields['5Y'].index)
-            spreads['10Y-5Y'] = yields['10Y'].loc[common_idx] - yields['5Y'].loc[common_idx]
-        
-        if '30Y' in yields.columns and '10Y' in yields.columns:
-            common_idx = yields['30Y'].index.intersection(yields['10Y'].index)
-            spreads['30Y-10Y'] = yields['30Y'].loc[common_idx] - yields['10Y'].loc[common_idx]
-        
-        if '10Y-3M' in spreads.columns:
-            spreads['Slope'] = spreads['10Y-3M'].copy()
-            rolling_mean = spreads['10Y-3M'].rolling(252, min_periods=50).mean()
-            rolling_std = spreads['10Y-3M'].rolling(252, min_periods=50).std()
-            spreads['10Y-3M_Zscore'] = (spreads['10Y-3M'] - rolling_mean) / rolling_std
-        
-        self.data['spreads'] = spreads
-        return self
-    
-    def generate_signals(self, strategy='composite'):
-        """Generate trading signals using multiple approaches"""
-        
-        spreads = self.data['spreads']
-        
-        if spreads.empty or '10Y-3M' not in spreads.columns:
-            st.error("Required spread data not available")
-            return self
-        
-        signals = pd.DataFrame(index=spreads.index)
-        
-        # Strategy 1: Classic inversion signal
+        # Strategy 1: Classic 2s10s inversion
         signals['Classic'] = 0
-        signals.loc[spreads['10Y-3M'] < 0, 'Classic'] = 1
-        signals.loc[spreads['10Y-3M'] > 0.5, 'Classic'] = -1
+        if '2s10s' in self.spreads.columns:
+            signals.loc[self.spreads['2s10s'] < 0, 'Classic'] = 1  # Buy on inversion
+            signals.loc[self.spreads['2s10s'] > 0.5, 'Classic'] = -1  # Sell when steep
         
-        # Strategy 2: Momentum-enhanced signal
+        # Strategy 2: 3m10y signal (more reliable recession indicator)
+        signals['3m10y'] = 0
+        if '3m10y' in self.spreads.columns:
+            signals.loc[self.spreads['3m10y'] < 0, '3m10y'] = 1
+            signals.loc[self.spreads['3m10y'] > 0.5, '3m10y'] = -1
+        
+        # Strategy 3: Momentum-enhanced
         signals['Momentum'] = 0
-        spread_change = spreads['10Y-3M'].diff(20)
-        signals.loc[(spreads['10Y-3M'] < 0) & (spread_change < 0), 'Momentum'] = 1
-        signals.loc[(spreads['10Y-3M'] > 0) & (spread_change > 0), 'Momentum'] = -1
-        
-        # Strategy 3: Z-score based mean reversion
-        signals['ZScore'] = 0
-        if '10Y-3M_Zscore' in spreads.columns:
-            zscore = spreads['10Y-3M_Zscore']
-            signals.loc[zscore < -1.5, 'ZScore'] = 1
-            signals.loc[zscore > 1.5, 'ZScore'] = -1
+        if '2s10s' in self.spreads.columns:
+            spread_change = self.spreads['2s10s'].diff(20)
+            signals.loc[(self.spreads['2s10s'] < 0) & (spread_change < 0), 'Momentum'] = 1
+            signals.loc[(self.spreads['2s10s'] > 0) & (spread_change > 0), 'Momentum'] = -1
         
         # Strategy 4: Composite
-        signals['Composite'] = (signals['Classic'] + signals['Momentum'] + signals['ZScore']) / 3
+        signals['Composite'] = (signals['Classic'] + signals['3m10y'] + signals['Momentum']) / 3
         signals['Composite'] = signals['Composite'].clip(-1, 1)
-        
-        # Strategy 5: Adaptive threshold
-        if 'VIX' in self.data['bond_prices'].columns:
-            vix_aligned = self.data['bond_prices']['VIX'].reindex(signals.index).fillna(method='ffill')
-            vol = vix_aligned / 20
-            vol = vol.clip(0, 1)
-            adaptive_threshold = 0.5 + vol
-            signals['Adaptive'] = 0
-            signals.loc[spreads['10Y-3M'] < -adaptive_threshold, 'Adaptive'] = 1
-            signals.loc[spreads['10Y-3M'] > adaptive_threshold, 'Adaptive'] = -1
-        else:
-            signals['Adaptive'] = signals['Classic']
         
         self.signals = signals
         return self
     
-    def backtest(self, etf='TLT', signal_col='Composite', transaction_cost=0.001):
+    def backtest(self, etf_prices, signal_col='Composite', transaction_cost=0.001):
         """Backtest the strategy"""
         
-        bond_prices = self.data['bond_prices']
-        
-        if etf not in bond_prices.columns:
-            raise Exception(f"ETF {etf} not available in data")
+        if self.signals is None:
+            self.generate_signals()
         
         signals = self.signals[signal_col].copy()
         
-        common_idx = bond_prices.index.intersection(signals.index)
+        # Align signals with ETF prices
+        common_idx = etf_prices.index.intersection(signals.index)
         if len(common_idx) == 0:
-            raise Exception("No overlapping dates between signals and bond data")
+            return None
         
         signals_aligned = signals.reindex(common_idx)
-        prices_aligned = bond_prices[etf].reindex(common_idx)
+        prices_aligned = etf_prices.reindex(common_idx)
         
+        # Calculate returns
         returns = prices_aligned.pct_change()
         strategy_returns = signals_aligned.shift(1) * returns
         
+        # Apply transaction costs
         signal_changes = signals_aligned.diff().abs()
         transaction_costs = signal_changes * transaction_cost
         strategy_returns = strategy_returns - transaction_costs
         
         strategy_returns = strategy_returns.fillna(0)
         
+        # Calculate cumulative returns
         cumulative_returns = (1 + strategy_returns).cumprod()
         buy_hold_returns = (1 + returns.fillna(0)).cumprod()
         
-        metrics = self.calculate_metrics(strategy_returns, returns.fillna(0), cumulative_returns, buy_hold_returns)
+        # Calculate metrics
+        metrics = self.calculate_metrics(strategy_returns, returns.fillna(0), 
+                                        cumulative_returns, buy_hold_returns)
         
         self.results = {
             'strategy_returns': strategy_returns,
@@ -226,7 +311,6 @@ class YieldCurveStrategy:
             'cumulative_bh': buy_hold_returns,
             'signals': signals_aligned,
             'metrics': metrics,
-            'etf': etf,
             'signal_col': signal_col
         }
         
@@ -238,30 +322,15 @@ class YieldCurveStrategy:
         strategy_clean = strategy_returns[strategy_returns != 0]
         
         if len(strategy_clean) == 0:
-            return {
-                'Total Return Strategy': 0,
-                'Total Return Benchmark': float(cum_benchmark.iloc[-1] - 1) if len(cum_benchmark) > 0 else 0,
-                'Excess Return': 0,
-                'Sharpe Ratio': 0,
-                'Benchmark Sharpe': 0,
-                'Max Drawdown': 0,
-                'Benchmark Drawdown': 0,
-                'Win Rate': 0,
-                'Profit Factor': 0,
-                'Calmar Ratio': 0
-            }
+            return self.get_empty_metrics(cum_benchmark)
         
         ann_factor = np.sqrt(252)
-        
-        strategy_std = strategy_returns.std()
-        benchmark_std = benchmark_returns.std()
         
         metrics = {
             'Total Return Strategy': float(cum_strategy.iloc[-1] - 1) if len(cum_strategy) > 0 else 0,
             'Total Return Benchmark': float(cum_benchmark.iloc[-1] - 1) if len(cum_benchmark) > 0 else 0,
-            'Excess Return': 0,
-            'Sharpe Ratio': (strategy_returns.mean() / strategy_std) * ann_factor if strategy_std > 0 else 0,
-            'Benchmark Sharpe': (benchmark_returns.mean() / benchmark_std) * ann_factor if benchmark_std > 0 else 0,
+            'Sharpe Ratio': (strategy_returns.mean() / strategy_returns.std()) * ann_factor if strategy_returns.std() > 0 else 0,
+            'Benchmark Sharpe': (benchmark_returns.mean() / benchmark_returns.std()) * ann_factor if benchmark_returns.std() > 0 else 0,
             'Max Drawdown': self.calculate_max_drawdown(cum_strategy),
             'Benchmark Drawdown': self.calculate_max_drawdown(cum_benchmark),
             'Win Rate': float((strategy_returns > 0).sum() / len(strategy_returns[strategy_returns != 0])) if len(strategy_returns[strategy_returns != 0]) > 0 else 0,
@@ -294,426 +363,436 @@ class YieldCurveStrategy:
         drawdown = (cum_clean - rolling_max) / rolling_max
         return float(drawdown.min())
     
-    def get_current_metrics(self):
-        """Get current market metrics for KPI display"""
-        if self.data is None:
-            return {}
-        
-        yields = self.data['yields']
-        spreads = self.data['spreads']
-        bond_prices = self.data['bond_prices']
-        
-        metrics = {}
-        
-        # Current yields
-        if '10Y' in yields.columns and len(yields) > 0:
-            metrics['current_10y'] = yields['10Y'].iloc[-1]
-        else:
-            metrics['current_10y'] = np.nan
-            
-        if '2Y' in yields.columns and len(yields) > 0:
-            metrics['current_2y'] = yields['2Y'].iloc[-1]
-        else:
-            metrics['current_2y'] = np.nan
-            
-        if '3M' in yields.columns and len(yields) > 0:
-            metrics['current_3m'] = yields['3M'].iloc[-1]
-        else:
-            metrics['current_3m'] = np.nan
-        
-        # Current spread
-        if spreads is not None and '10Y-3M' in spreads.columns and len(spreads) > 0:
-            metrics['current_spread'] = spreads['10Y-3M'].iloc[-1]
-        else:
-            metrics['current_spread'] = np.nan
-        
-        # Current VIX
-        if 'VIX' in bond_prices.columns and len(bond_prices) > 0:
-            metrics['current_vix'] = bond_prices['VIX'].iloc[-1]
-        else:
-            metrics['current_vix'] = np.nan
-        
-        # Regime classification
-        if 'current_spread' in metrics and not np.isnan(metrics['current_spread']):
-            if metrics['current_spread'] < 0:
-                metrics['regime'] = "Risk-off / Recession Watch"
-                metrics['regime_text'] = "Curve inversion signals defensive positioning"
-            elif metrics['current_spread'] < 0.5:
-                metrics['regime'] = "Neutral / Late Cycle"
-                metrics['regime_text'] = "Curve flattening suggests caution"
-            else:
-                metrics['regime'] = "Risk-on / Expansion"
-                metrics['regime_text'] = "Positive slope supports risk-taking"
-        else:
-            metrics['regime'] = "Data Loading"
-            metrics['regime_text'] = "Please wait for data"
-        
-        # Recession probability proxy
-        if 'current_spread' in metrics and not np.isnan(metrics['current_spread']):
-            prob = max(0, min(1, (-metrics['current_spread'] / 2) + 0.3))
-            metrics['recession_prob'] = prob
-        else:
-            metrics['recession_prob'] = 0.5
-        
-        return metrics
+    @staticmethod
+    def get_empty_metrics(cum_benchmark):
+        """Return empty metrics when no data available"""
+        return {
+            'Total Return Strategy': 0,
+            'Total Return Benchmark': float(cum_benchmark.iloc[-1] - 1) if len(cum_benchmark) > 0 else 0,
+            'Excess Return': 0,
+            'Sharpe Ratio': 0,
+            'Benchmark Sharpe': 0,
+            'Max Drawdown': 0,
+            'Benchmark Drawdown': 0,
+            'Win Rate': 0,
+            'Profit Factor': 0,
+            'Calmar Ratio': 0
+        }
+
+def get_recession_probability(spreads_df):
+    """Calculate recession probability based on yield curve"""
+    if '2s10s' not in spreads_df.columns or spreads_df.empty:
+        return 0.5
     
-    def create_visualizations(self):
-        """Create Plotly visualizations"""
-        if self.results is None:
-            return None
-        
-        charts = {}
-        
-        # Chart 1: Cumulative Returns
-        fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(
-            x=self.results['cumulative_strategy'].index,
-            y=self.results['cumulative_strategy'].values,
-            mode='lines',
-            name=f'Strategy ({self.results["signal_col"]})',
-            line=dict(color='#2c5f8a', width=2)
-        ))
-        fig1.add_trace(go.Scatter(
-            x=self.results['cumulative_bh'].index,
-            y=self.results['cumulative_bh'].values,
-            mode='lines',
-            name='Buy & Hold',
-            line=dict(color='#c17f3a', width=2, dash='dash')
-        ))
-        fig1.update_layout(
-            title='Cumulative Returns Comparison',
-            xaxis_title='Date',
-            yaxis_title='Cumulative Return',
-            hovermode='x unified',
-            template='plotly_white',
-            height=500
-        )
-        charts['returns'] = fig1
-        
-        # Chart 2: Yield Spread History
-        if self.data['spreads'] is not None and '10Y-3M' in self.data['spreads'].columns:
-            fig2 = go.Figure()
-            spreads_aligned = self.data['spreads']['10Y-3M']
-            fig2.add_trace(go.Scatter(
-                x=spreads_aligned.index,
-                y=spreads_aligned.values,
-                mode='lines',
-                name='10Y-3M Spread',
-                line=dict(color='blue', width=2),
-                fill='tozeroy',
-                fillcolor='rgba(0,0,255,0.1)'
-            ))
-            fig2.add_hline(y=0, line_dash="dash", line_color="red", 
-                          annotation_text="Inversion Threshold")
-            fig2.add_hline(y=0.5, line_dash="dash", line_color="orange",
-                          annotation_text="Steep Threshold")
-            fig2.update_layout(
-                title='10Y-3M Yield Spread History',
-                xaxis_title='Date',
-                yaxis_title='Spread (%)',
-                hovermode='x unified',
-                template='plotly_white',
-                height=500
-            )
-            charts['spread'] = fig2
-        
-        return charts
+    current_spread = spreads_df['2s10s'].iloc[-1]
+    if pd.isna(current_spread):
+        return 0.5
+    
+    # Logistic function based on historical relationship
+    prob = 1 / (1 + np.exp(-(-current_spread * 2 - 0.5)))
+    return min(max(prob, 0.01), 0.99)
 
 # =============================================================================
-# STREAMLIT UI WITH DYNAMIC UPDATES
+# VISUALIZATION FUNCTIONS
 # =============================================================================
 
-st.set_page_config(page_title="Yield Curve Strategy Backtest", layout="wide")
+def plot_forward_rates(forwards_df):
+    """Plot forward rates"""
+    if forwards_df.empty:
+        return None
+    
+    fig = go.Figure()
+    
+    for col in forwards_df.columns:
+        fig.add_trace(go.Scatter(
+            x=forwards_df.index,
+            y=forwards_df[col],
+            name=col,
+            line=dict(width=2)
+        ))
+    
+    fig.update_layout(
+        title='Implied Forward Rates',
+        xaxis_title='Date',
+        yaxis_title='Forward Rate (%)',
+        template='plotly_white',
+        hovermode='x unified',
+        height=500
+    )
+    
+    return fig
 
-st.title("📈 Yield Curve Trading Strategy Backtest")
-st.markdown("Advanced fixed-income strategy using yield curve inversion signals")
+def plot_backtest_results(results):
+    """Plot backtest results"""
+    if results is None:
+        return None
+    
+    fig = make_subplots(rows=2, cols=1, 
+                        subplot_titles=('Cumulative Returns', 'Signal Distribution'),
+                        vertical_spacing=0.15,
+                        row_heights=[0.6, 0.4])
+    
+    # Cumulative returns
+    fig.add_trace(go.Scatter(
+        x=results['cumulative_strategy'].index,
+        y=results['cumulative_strategy'].values,
+        name=f'Strategy ({results["signal_col"]})',
+        line=dict(color='#2c5f8a', width=2)
+    ), row=1, col=1)
+    
+    fig.add_trace(go.Scatter(
+        x=results['cumulative_bh'].index,
+        y=results['cumulative_bh'].values,
+        name='Buy & Hold',
+        line=dict(color='#c17f3a', width=2, dash='dash')
+    ), row=1, col=1)
+    
+    # Signal distribution
+    signal_counts = results['signals'].value_counts()
+    colors = ['#4a7c59' if x > 0 else '#c05656' if x < 0 else '#999' for x in signal_counts.index]
+    
+    fig.add_trace(go.Bar(
+        x=signal_counts.index.astype(str),
+        y=signal_counts.values,
+        name='Signal Distribution',
+        marker_color=colors
+    ), row=2, col=1)
+    
+    fig.update_layout(
+        title='Strategy Backtest Results',
+        template='plotly_white',
+        height=700,
+        showlegend=True
+    )
+    
+    fig.update_xaxes(title_text="Date", row=1, col=1)
+    fig.update_yaxes(title_text="Cumulative Return", row=1, col=1)
+    fig.update_xaxes(title_text="Signal", row=2, col=1)
+    fig.update_yaxes(title_text="Frequency", row=2, col=1)
+    
+    return fig
 
-# Initialize session state for tracking
-if 'last_run_params' not in st.session_state:
-    st.session_state.last_run_params = None
-if 'strategy_results' not in st.session_state:
-    st.session_state.strategy_results = None
+# =============================================================================
+# STREAMLIT UI
+# =============================================================================
 
-# Sidebar controls
+st.set_page_config(
+    page_title="Bond Yield Curve Analysis Platform",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS
+st.markdown("""
+<style>
+    .stApp {
+        background: linear-gradient(135deg, #eef2f7 0%, #f7f9fc 100%);
+    }
+    .metric-card {
+        background: white;
+        border-radius: 12px;
+        padding: 1rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .main-title {
+        background: linear-gradient(135deg, #1a2a3a 0%, #2c4a6e 100%);
+        border-radius: 20px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        color: white;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Title
+st.markdown("""
+<div class="main-title">
+    <h1>📈 Bond Yield Curve Analysis Platform</h1>
+    <p>Institutional-Grade Fixed Income Analytics | Yield Curves | Trading Strategies | Risk Metrics</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
 with st.sidebar:
-    st.header("⚙️ Strategy Configuration")
+    st.header("⚙️ Configuration")
     
-    # Date selection with automatic end date
-    today = date.today()
-    default_end = today - pd.Timedelta(days=1)
+    # Date range selection
+    default_end = datetime.now()
+    default_start = default_end - timedelta(days=365*2)
     
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input(
-            "Start Date", 
-            pd.to_datetime('2015-01-01'),
-            help="Beginning of backtest period"
-        )
-    with col2:
-        end_date = st.date_input(
-            "End Date", 
-            default_end,
-            help=f"Defaults to yesterday ({default_end.strftime('%Y-%m-%d')})"
-        )
-    
-    # Ensure end date is not in the future
-    if end_date > today:
-        st.warning(f"End date adjusted to yesterday ({default_end})")
-        end_date = default_end
-    
-    etf_choice = st.selectbox(
-        "Bond ETF", 
-        ['TLT', 'IEF', 'SHY', 'BND'], 
-        help="TLT: Long-term, IEF: Intermediate, SHY: Short-term"
-    )
-    
-    signal_choice = st.selectbox(
-        "Signal Type", 
-        ['Composite', 'Classic', 'Momentum', 'ZScore', 'Adaptive']
-    )
-    
-    transaction_cost = st.slider("Transaction Cost (%)", 0.0, 0.5, 0.1, 0.01) / 100
+    start_date = st.date_input("Start Date", default_start, max_value=default_end)
+    end_date = st.date_input("End Date", default_end, max_value=default_end)
     
     st.markdown("---")
+    st.header("📊 Strategy Parameters")
     
-    # Run button with clear indication that it triggers a refresh
-    run_backtest = st.button("🚀 Run Backtest", type="primary", use_container_width=True)
+    selected_etf = st.selectbox("Select ETF for Backtest", list(BOND_ETFS.keys()))
+    selected_strategy = st.selectbox("Trading Strategy", 
+                                     ['Composite', 'Classic', '3m10y', 'Momentum'])
+    transaction_cost = st.slider("Transaction Cost (%)", 0.0, 0.5, 0.1, 0.01) / 100
     
-    # Show current parameters
-    st.markdown("### 📅 Current Parameters")
-    st.info(f"""
-    **Period:** {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}
-    **ETF:** {etf_choice}
-    **Signal:** {signal_choice}
-    """)
+    run_analysis = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
 
 # Main content
-if run_backtest:
-    # Clear cache to force fresh data fetch
-    st.cache_data.clear()
-    
-    with st.spinner("Fetching data and running backtest..."):
-        try:
-            # Create unique key for this run
-            run_key = f"{start_date}_{end_date}_{etf_choice}_{signal_choice}"
-            
-            # Initialize strategy with current dates
-            strategy = YieldCurveStrategy(
-                start_date=start_date.strftime('%Y-%m-%d'),
-                end_date=end_date.strftime('%Y-%m-%d')
-            )
-            
-            # Fetch data
-            status_text = st.empty()
-            status_text.text("📡 Fetching yield curve data...")
-            strategy.fetch_data()
-            
-            status_text.text("📐 Calculating spreads and signals...")
-            strategy.calculate_spreads()
-            strategy.generate_signals()
-            
-            status_text.text("💹 Running backtest...")
-            strategy.backtest(
-                etf=etf_choice, 
-                signal_col=signal_choice,
-                transaction_cost=transaction_cost
-            )
-            
-            status_text.empty()
-            
-            # Store results in session state
-            st.session_state.strategy_results = strategy
-            st.session_state.last_run_params = run_key
-            
-            # Display success
-            st.success(f"✅ Backtest completed for period {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
-            
-        except Exception as e:
-            st.error(f"Error running backtest: {str(e)}")
-            st.info("""
-            **Troubleshooting tips:**
-            1. Check your internet connection
-            2. Try a different date range (e.g., 2020-01-01 to 2023-12-31)
-            3. The yfinance API might be temporarily rate-limited - wait a few minutes
-            4. Try refreshing the page and running again
-            """)
+if run_analysis:
+    with st.spinner("Fetching market data..."):
+        # Fetch data
+        df = fetch_yield_data(start_date, end_date)
+        
+        if df.empty:
+            st.error("Failed to fetch yield data. Please check your date range and try again.")
             st.stop()
-
-# Display results if available
-if st.session_state.strategy_results is not None:
-    strategy = st.session_state.strategy_results
+        
+        # Calculate spreads and forwards
+        spreads = calculate_spreads(df)
+        forwards = calculate_forward_rates(df)
+        
+        # Fetch ETF data for backtest
+        etf_prices = fetch_etf_data(selected_etf, start_date, end_date)
+        
+        # Fetch VIX data
+        vix_data = fetch_vix_data(start_date, end_date)
+        
+        # Run trading strategy
+        strategy = YieldCurveTradingStrategy(df, spreads)
+        strategy.generate_signals()
+        backtest_results = strategy.backtest(etf_prices, selected_strategy, transaction_cost)
+        
+        # Calculate recession probability
+        recession_prob = get_recession_probability(spreads)
+        
+        # Display KPIs
+        st.subheader("📊 Market Overview")
+        
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            current_10y = df['10Y'].iloc[-1] if '10Y' in df.columns and not df.empty else np.nan
+            st.metric("10Y Yield", f"{current_10y:.2f}%" if not np.isnan(current_10y) else "N/A")
+        
+        with col2:
+            current_2y = df['2Y'].iloc[-1] if '2Y' in df.columns and not df.empty else np.nan
+            st.metric("2Y Yield", f"{current_2y:.2f}%" if not np.isnan(current_2y) else "N/A")
+        
+        with col3:
+            current_spread = spreads['2s10s'].iloc[-1] if '2s10s' in spreads.columns and not spreads.empty else np.nan
+            st.metric("2s10s Spread", f"{current_spread:.2f}%" if not np.isnan(current_spread) else "N/A")
+        
+        with col4:
+            st.metric("Recession Probability", f"{recession_prob:.1%}")
+        
+        with col5:
+            current_vix = vix_data.iloc[-1] if not vix_data.empty else np.nan
+            st.metric("VIX", f"{current_vix:.2f}" if not np.isnan(current_vix) else "N/A")
+        
+        # Create tabs for different analyses
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "📈 Yield Curve", 
+            "📊 Spread Analysis", 
+            "🎯 Trading Strategy",
+            "📉 Forward Rates",
+            "📋 Data Explorer"
+        ])
+        
+        # Tab 1: Yield Curve
+        with tab1:
+            st.subheader("Yield Curve Visualization")
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                fig_yield = plot_yield_curve(df, end_date)
+                if fig_yield:
+                    st.plotly_chart(fig_yield, use_container_width=True)
+                else:
+                    st.warning("No yield curve data available for the selected date")
+            
+            with col2:
+                st.markdown("### Curve Statistics")
+                if not df.empty:
+                    latest = df.iloc[-1]
+                    st.markdown(f"""
+                    - **Steepness (10Y-2Y):** {latest.get('10Y', 0) - latest.get('2Y', 0):.2f}%
+                    - **Level (10Y):** {latest.get('10Y', 0):.2f}%
+                    - **Short End (3M):** {latest.get('3M', 0):.2f}%
+                    - **Long End (30Y):** {latest.get('30Y', 0):.2f}%
+                    """)
+        
+        # Tab 2: Spread Analysis
+        with tab2:
+            st.subheader("Yield Spread Analysis")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if not spreads.empty:
+                    fig_spreads = plot_spreads(spreads)
+                    st.plotly_chart(fig_spreads, use_container_width=True)
+                else:
+                    st.info("No spread data available")
+            
+            with col2:
+                st.markdown("### Current Spreads")
+                if not spreads.empty:
+                    current_spreads = spreads.iloc[-1]
+                    for spread_name, value in current_spreads.items():
+                        if pd.notna(value):
+                            color = "🟢" if value > 0 else "🔴" if value < -0.5 else "🟡"
+                            st.metric(f"{color} {spread_name.upper()} Spread", f"{value:.2f}%")
+                
+                st.markdown("### Interpretation")
+                if '2s10s' in spreads.columns and not spreads.empty:
+                    latest_2s10s = spreads['2s10s'].iloc[-1]
+                    if latest_2s10s < 0:
+                        st.warning("⚠️ Yield curve is INVERTED! Historically signals recession within 6-18 months.")
+                    elif latest_2s10s < 0.5:
+                        st.info("📊 Yield curve is flattening. Monitor for potential inversion.")
+                    else:
+                        st.success("✅ Yield curve is normal/steep. Economic expansion likely continuing.")
+        
+        # Tab 3: Trading Strategy
+        with tab3:
+            st.subheader(f"Trading Strategy: {selected_strategy}")
+            
+            if backtest_results and backtest_results.results:
+                results = backtest_results.results
+                metrics = results['metrics']
+                
+                # Display metrics
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Total Return (Strategy)", f"{metrics['Total Return Strategy']:.2%}")
+                    st.metric("Sharpe Ratio", f"{metrics['Sharpe Ratio']:.2f}")
+                
+                with col2:
+                    st.metric("Total Return (Benchmark)", f"{metrics['Total Return Benchmark']:.2%}")
+                    st.metric("Max Drawdown", f"{metrics['Max Drawdown']:.2%}")
+                
+                with col3:
+                    st.metric("Excess Return", f"{metrics['Excess Return']:.2%}")
+                    st.metric("Win Rate", f"{metrics['Win Rate']:.2%}")
+                
+                with col4:
+                    st.metric("Profit Factor", f"{metrics['Profit Factor']:.2f}")
+                    st.metric("Calmar Ratio", f"{metrics['Calmar Ratio']:.2f}")
+                
+                # Plot backtest results
+                fig_backtest = plot_backtest_results(results)
+                if fig_backtest:
+                    st.plotly_chart(fig_backtest, use_container_width=True)
+                
+                # Signal distribution
+                with st.expander("Recent Trading Signals"):
+                    recent_signals = pd.DataFrame({
+                        'Date': results['signals'].tail(20).index.strftime('%Y-%m-%d'),
+                        'Signal': results['signals'].tail(20).values,
+                        'Action': ['BUY' if x > 0 else 'SELL' if x < 0 else 'HOLD' 
+                                  for x in results['signals'].tail(20).values]
+                    })
+                    st.dataframe(recent_signals, use_container_width=True, hide_index=True)
+            else:
+                st.warning("Backtest results not available. Try a different date range or ETF.")
+        
+        # Tab 4: Forward Rates
+        with tab4:
+            st.subheader("Implied Forward Rate Analysis")
+            
+            if not forwards.empty:
+                fig_forwards = plot_forward_rates(forwards)
+                if fig_forwards:
+                    st.plotly_chart(fig_forwards, use_container_width=True)
+                
+                # Latest forward rates
+                st.markdown("### Current Forward Rates")
+                latest_forwards = forwards.iloc[-1]
+                cols = st.columns(len(latest_forwards))
+                for idx, (period, rate) in enumerate(latest_forwards.items()):
+                    if pd.notna(rate):
+                        cols[idx].metric(period, f"{rate:.2f}%")
+            else:
+                st.info("Forward rate data not available")
+        
+        # Tab 5: Data Explorer
+        with tab5:
+            st.subheader("Historical Yield Data")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("### Summary Statistics")
+                st.dataframe(df.describe().round(2), use_container_width=True)
+            
+            with col2:
+                st.markdown("### Correlation Matrix")
+                st.dataframe(df.corr().round(2), use_container_width=True)
+            
+            st.markdown("### Raw Data")
+            st.dataframe(df.tail(50), use_container_width=True)
+            
+            # Download buttons
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                csv_yields = df.to_csv()
+                st.download_button("📥 Download Yield Data (CSV)", csv_yields, "yield_data.csv", "text/csv")
+            
+            with col2:
+                if not spreads.empty:
+                    csv_spreads = spreads.to_csv()
+                    st.download_button("📥 Download Spreads (CSV)", csv_spreads, "spreads.csv", "text/csv")
+            
+            with col3:
+                if backtest_results and backtest_results.results:
+                    results_df = pd.DataFrame({
+                        'Date': backtest_results.results['cumulative_strategy'].index,
+                        'Strategy_Returns': backtest_results.results['cumulative_strategy'].values,
+                        'Benchmark_Returns': backtest_results.results['cumulative_bh'].values
+                    })
+                    csv_results = results_df.to_csv()
+                    st.download_button("📥 Download Backtest Results (CSV)", csv_results, "backtest_results.csv", "text/csv")
     
-    # Get current market metrics for KPI display
-    current_metrics = strategy.get_current_metrics()
-    
-    # KPI ROW - These will update when new data is fetched
-    st.subheader("📊 Current Market Metrics")
-    
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
-    
-    with col1:
-        st.metric(
-            "📊 Macro Regime", 
-            current_metrics.get('regime', 'N/A'),
-            delta=current_metrics.get('regime_text', '')[:30]
-        )
-    
-    with col2:
-        current_10y = current_metrics.get('current_10y', np.nan)
-        st.metric(
-            "🏦 10Y Yield", 
-            f"{current_10y:.2f}%" if not np.isnan(current_10y) else "N/A",
-            help="Current 10-year Treasury yield"
-        )
-    
-    with col3:
-        current_3m = current_metrics.get('current_3m', np.nan)
-        st.metric(
-            "📝 3M Yield", 
-            f"{current_3m:.2f}%" if not np.isnan(current_3m) else "N/A",
-            help="Current 3-month Treasury yield"
-        )
-    
-    with col4:
-        current_spread = current_metrics.get('current_spread', np.nan)
-        spread_color = "normal" if current_spread >= 0 else "inverse"
-        st.metric(
-            "🔄 10Y-3M Spread", 
-            f"{current_spread:.2f}%" if not np.isnan(current_spread) else "N/A",
-            delta=f"{'Inverted' if current_spread < 0 else 'Normal'}",
-            delta_color=spread_color
-        )
-    
-    with col5:
-        recession_prob = current_metrics.get('recession_prob', 0.5)
-        st.metric(
-            "⚠️ Recession Prob", 
-            f"{recession_prob:.1%}",
-            help="Estimated probability based on spread"
-        )
-    
-    with col6:
-        current_vix = current_metrics.get('current_vix', np.nan)
-        st.metric(
-            "📉 VIX", 
-            f"{current_vix:.2f}" if not np.isnan(current_vix) else "N/A",
-            help="CBOE Volatility Index"
-        )
-    
-    # Performance Metrics
-    st.subheader("📊 Strategy Performance Metrics")
-    
-    metrics = strategy.results['metrics']
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col5, col6, col7, col8 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Return (Strategy)", f"{metrics['Total Return Strategy']:.2%}")
-    with col2:
-        st.metric("Total Return (Benchmark)", f"{metrics['Total Return Benchmark']:.2%}")
-    with col3:
-        st.metric("Excess Return", f"{metrics['Excess Return']:.2%}")
-    with col4:
-        st.metric("Sharpe Ratio", f"{metrics['Sharpe Ratio']:.2f}")
-    
-    with col5:
-        st.metric("Max Drawdown", f"{metrics['Max Drawdown']:.2%}")
-    with col6:
-        st.metric("Win Rate", f"{metrics['Win Rate']:.2%}")
-    with col7:
-        st.metric("Profit Factor", f"{metrics['Profit Factor']:.2f}")
-    with col8:
-        st.metric("Calmar Ratio", f"{metrics['Calmar Ratio']:.2f}")
-    
-    # Charts
-    st.subheader("📈 Strategy Visualization")
-    charts = strategy.create_visualizations()
-    
-    if charts:
-        if 'returns' in charts:
-            st.plotly_chart(charts['returns'], use_container_width=True)
-        if 'spread' in charts:
-            st.plotly_chart(charts['spread'], use_container_width=True)
-    
-    # Signal Statistics
-    st.subheader("🎯 Signal Statistics")
-    signals = strategy.results['signals']
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total Trading Days", len(signals))
-    with col2:
-        buy_signals = (signals > 0).sum()
-        st.metric("Buy Signals", buy_signals, delta=f"{buy_signals/len(signals)*100:.1f}%")
-    with col3:
-        sell_signals = (signals < 0).sum()
-        st.metric("Sell Signals", sell_signals, delta=f"{sell_signals/len(signals)*100:.1f}%")
-    with col4:
-        neutral = (signals == 0).sum()
-        st.metric("Neutral", neutral, delta=f"{neutral/len(signals)*100:.1f}%")
-    
-    # Recent signals
-    with st.expander("View Recent Signals"):
-        recent_signals = pd.DataFrame({
-            'Date': signals.tail(20).index.strftime('%Y-%m-%d'),
-            'Signal': signals.tail(20).values,
-            'Action': ['BUY' if x > 0 else 'SELL' if x < 0 else 'NEUTRAL' for x in signals.tail(20).values]
-        })
-        st.dataframe(recent_signals, use_container_width=True, hide_index=True)
-    
-    # Download results
-    st.subheader("💾 Export Results")
-    
-    results_df = pd.DataFrame({
-        'Date': strategy.results['cumulative_strategy'].index.strftime('%Y-%m-%d'),
-        'Strategy_Returns': strategy.results['cumulative_strategy'].values,
-        'Benchmark_Returns': strategy.results['cumulative_bh'].values,
-        'Signal': strategy.results['signals'].values
-    })
-    
-    csv = results_df.to_csv(index=False)
-    st.download_button(
-        "📥 Download Backtest Results (CSV)", 
-        csv, 
-        f"backtest_results_{start_date}_{end_date}.csv", 
-        "text/csv",
-        use_container_width=True
-    )
-
 else:
-    st.info("👈 Configure your strategy parameters and click 'Run Backtest' to start")
+    # Initial state - show instructions
+    st.info("👈 Configure your analysis parameters in the sidebar and click 'Run Analysis' to begin")
     
-    # Show explanation
-    with st.expander("📖 How This Strategy Works", expanded=True):
-        st.markdown("""
-        ### The Yield Curve Inversion Strategy
-        
-        This strategy is based on a well-documented market anomaly where an inverted yield curve (short-term rates > long-term rates) historically precedes economic recessions and bond market rallies.
-        
-        #### Signal Logic
-        - **BUY Signal (1)**: When 10Y-3M spread < 0 (inverted curve)
-          - Historically precedes economic recessions
-          - Bond prices tend to rally as yields fall
-          
-        - **SELL Signal (-1)**: When 10Y-3M spread > 0.5% (steep curve)
-          - Typically during economic expansion
-          - Rising yields pressure bond prices lower
-        
-        #### Strategy Variants
-        | Strategy | Description | Best For |
-        |----------|-------------|----------|
-        | **Classic** | Simple inversion-based signal | Clear recession signals |
-        | **Momentum** | Incorporates spread momentum (20-day change) | Trend-following |
-        | **ZScore** | Statistical z-score mean reversion | Mean reversion trades |
-        | **Adaptive** | Adjusts thresholds based on VIX volatility | Volatile markets |
-        | **Composite** | Ensemble average of all signals (recommended) | All market conditions |
-        
-        ### ⚠️ Risk Warning
-        Past performance does not guarantee future results. This strategy is for educational purposes only.
-        Always conduct your own research and consider your risk tolerance before making investment decisions.
-        """)
+    st.markdown("""
+    ### 📖 Platform Features
+    
+    This institutional-grade fixed income analytics platform provides:
+    
+    #### 1. Yield Curve Analysis
+    - Interactive yield curve visualization
+    - Historical curve comparison
+    - Steepness, level, and curvature metrics
+    
+    #### 2. Spread Analysis  
+    - 2s10s (2-year vs 10-year) - Key recession indicator
+    - 3m10y (3-month vs 10-year) - Alternative inversion measure
+    - 5s30s (5-year vs 30-year) - Long-term steepness
+    
+    #### 3. Trading Strategies
+    - Classic inversion-based signals
+    - Momentum-enhanced strategies
+    - Composite ensemble signals
+    - Full backtesting with transaction costs
+    
+    #### 4. Forward Rates
+    - Implied forward rate curves
+    - Market expectations for future rates
+    - Term structure analysis
+    
+    ### 🎯 Use Cases
+    
+    - **Portfolio Management**: Generate tactical trading signals
+    - **Risk Management**: Monitor recession indicators
+    - **Research**: Analyze historical yield curve behavior
+    - **Strategy Development**: Backtest quantitative strategies
+    
+    ### ⚠️ Risk Warning
+    
+    Past performance does not guarantee future results. This platform is for educational and research purposes only.
+    """)
 
 # Footer
 st.markdown("---")
-st.markdown(f"*Data as of {date.today().strftime('%Y-%m-%d')} | Built with yfinance, Plotly, and Streamlit | Educational purposes only*")
+st.markdown(f"*Data as of {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Built with yfinance, Plotly, and Streamlit*")
