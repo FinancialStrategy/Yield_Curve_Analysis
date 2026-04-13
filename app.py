@@ -1402,7 +1402,7 @@ def main() -> None:
                     unsafe_allow_html=True,
                 )
 
-    
+
 with top_tabs[3]:
         scenario_df = classify_historical_scenarios(yield_df, spreads)
         scenario_summary = summarize_historical_scenarios(scenario_df, yield_df)
@@ -1492,7 +1492,7 @@ with top_tabs[4]:
                 st.info("No lead-time episodes were identified in the current sample alignment.")
             st.markdown('<div class="note-box"><b>Lead-Time Summary</b> helps users compare the current inversion with past episodes and estimate how much time historically elapsed before recession onset.</div>', unsafe_allow_html=True)
 
-    
+
 with top_tabs[5]:
         tech_tabs = st.tabs(["OHLC and Indicators", "Rate Direction Techniques", "Interpretation Notes"])
         with tech_tabs[0]:
