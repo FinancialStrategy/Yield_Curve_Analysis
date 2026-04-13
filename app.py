@@ -36,7 +36,6 @@ except ImportError:
 
 # =============================================================================
 # V36 ENHANCED INSTITUTIONAL PLATFORM - FULL VERSION
-# ALL MODULES INTACT - NO SHORTENING
 # =============================================================================
 
 st.set_page_config(
@@ -77,7 +76,7 @@ COLORS = {
 }
 
 # =============================================================================
-# CSS STYLES - COMPLETE
+# CSS STYLES
 # =============================================================================
 
 st.markdown(
@@ -532,11 +531,13 @@ def bollinger_bands(x: pd.Series, n: int = 20, k: float = 2.0):
     return mid + k * sd, mid, mid - k * sd
 
 def atr(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 14) -> pd.Series:
-    tr = pd.DataFrame({
-        'hl': high - low,
-        'hc': abs(high - close.shift(1)),
-        'lc': abs(low - close.shift(1))
-    }).max(axis=1)
+    """Calculate Average True Range - FIXED VERSION"""
+    # Create DataFrame with proper index alignment
+    tr_df = pd.DataFrame(index=high.index)
+    tr_df['hl'] = high - low
+    tr_df['hc'] = abs(high - close.shift(1))
+    tr_df['lc'] = abs(low - close.shift(1))
+    tr = tr_df.max(axis=1)
     return tr.rolling(n).mean()
 
 def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -699,7 +700,7 @@ def arbitrage_diagnostics(yield_df: pd.DataFrame, maturities: np.ndarray) -> Opt
     }
 
 # =============================================================================
-# NELSON-SIEGEL MODEL (FULL VERSION)
+# NELSON-SIEGEL MODEL
 # =============================================================================
 
 class NelsonSiegelModel:
@@ -905,7 +906,7 @@ def forecast_curve(yield_df: pd.DataFrame, horizon: int = 20) -> pd.DataFrame:
     return pd.DataFrame(out, index=dates)
 
 # =============================================================================
-# MONTE CARLO SIMULATION (FULL VERSION)
+# MONTE CARLO SIMULATION
 # =============================================================================
 
 class MonteCarloSimulator:
@@ -947,7 +948,7 @@ class MonteCarloSimulator:
         return np.percentile(paths[:, -1], (1 - confidence) * 100)
 
 # =============================================================================
-# MACHINE LEARNING FORECAST (FULL VERSION)
+# MACHINE LEARNING FORECAST
 # =============================================================================
 
 class MLForecastModel:
@@ -1012,7 +1013,7 @@ class MLForecastModel:
         }
 
 # =============================================================================
-# ENHANCED BACKTEST ENGINE (FULL VERSION)
+# BACKTEST ENGINE
 # =============================================================================
 
 class BacktestEngine:
@@ -1063,7 +1064,7 @@ class BacktestEngine:
         }
 
 # =============================================================================
-# VOLATILITY AND CORRELATION ANALYZER (FULL VERSION)
+# VOLATILITY AND CORRELATION ANALYZER
 # =============================================================================
 
 class VolatilityAnalyzer:
@@ -1115,7 +1116,7 @@ class CorrelationAnalyzer:
         return returns1.rolling(window).corr(returns2)
 
 # =============================================================================
-# SCENARIO ENGINE (FULL VERSION)
+# SCENARIO ENGINE
 # =============================================================================
 
 def scenario_engine(yield_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
@@ -1150,7 +1151,7 @@ def scenario_engine(yield_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     return scenarios
 
 # =============================================================================
-# ENHANCED VISUALIZATION FUNCTIONS (COMPLETE)
+# ENHANCED VISUALIZATION FUNCTIONS
 # =============================================================================
 
 def add_recession_bands(fig: go.Figure, recessions: List[dict]) -> go.Figure:
@@ -1540,6 +1541,11 @@ def main() -> None:
     regime, regime_text, regime_type = classify_regime(spreads, yield_df)
     recession_prob = recession_probability_proxy(spreads, yield_df)
 
+    current_2y = yield_df["2Y"].iloc[-1] if "2Y" in yield_df.columns else np.nan
+    current_10y = yield_df["10Y"].iloc[-1] if "10Y" in yield_df.columns else np.nan
+    current_30y = yield_df["30Y"].iloc[-1] if "30Y" in yield_df.columns else np.nan
+    current_spread = spreads["10Y-2Y"].iloc[-1] if "10Y-2Y" in spreads.columns else np.nan
+
     with st.spinner("Running model layer..."):
         ns_result = NelsonSiegelModel.fit_ns(maturities, latest_curve)
         nss_result = NelsonSiegelModel.fit_nss(maturities, latest_curve)
@@ -1566,7 +1572,7 @@ def main() -> None:
     if current_spread < 0 and np.isfinite(current_spread):
         st.warning("⚠️ **YIELD CURVE IS INVERTED!** Historically signals recession within 6-18 months.")
 
-    # Main Tabs - COMPLETE SET
+    # Main Tabs
     main_tabs = st.tabs([
         "🏦 Executive Summary",
         "📐 Model Parameters",
@@ -1590,7 +1596,7 @@ def main() -> None:
             <div class="note-box">
             <b>📋 Macro Analysis Summary</b><br><br>
             The current macro regime is identified as <b>{regime}</b>. The 10Y Treasury yield sits at
-            <b>{yield_df['10Y'].iloc[-1]:.2f}%</b>. The 10Y-2Y spread is <b>{spreads['10Y-2Y'].iloc[-1]:.1f} bps</b>,
+            <b>{current_10y:.2f}%</b>. The 10Y-2Y spread is <b>{current_spread:.1f} bps</b>,
             with a recession probability of <b>{100 * recession_prob:.1f}%</b>.
             </div>
             """,
@@ -1714,12 +1720,12 @@ def main() -> None:
         
         col1, col2 = st.columns([1, 2])
         with col1:
-            st.info(f"**Current 10Y Yield:** {yield_df['10Y'].iloc[-1]:.2f}%")
+            st.info(f"**Current 10Y Yield:** {current_10y:.2f}%")
             st.info(f"**Historical Volatility (10Y):** {yield_df['10Y'].pct_change().std() * np.sqrt(252):.2%}")
         
         if st.button("🚀 Initialize Simulation Array", use_container_width=True):
             with st.spinner(f"Computing {mc_simulations:,} stochastic paths..."):
-                initial_y = yield_df['10Y'].iloc[-1] if np.isfinite(yield_df['10Y'].iloc[-1]) else 4.0
+                initial_y = current_10y if np.isfinite(current_10y) else 4.0
                 returns = yield_df["10Y"].pct_change().dropna() if "10Y" in yield_df.columns else pd.Series([0])
                 
                 if mc_model == "Geometric Brownian Motion":
