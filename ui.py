@@ -1,13 +1,78 @@
 """
 UI Helper Module - KPI cards, API gate, CSS styling
+FIXED: Proper handling of pandas Series in numeric checks
 """
 
 import streamlit as st
 import numpy as np
 import pandas as pd
-from typing import Optional
+from typing import Optional, Union
 from config import COLORS, __version__
 from data import validate_fred_api_key
+
+
+def safe_float(value: Union[float, pd.Series, None], default: float = 0.0) -> float:
+    """
+    Safely convert a value to float, handling pandas Series and NaN values
+    
+    Parameters
+    ----------
+    value : float, pd.Series, or None
+        Input value to convert
+    default : float
+        Default value if conversion fails
+    
+    Returns
+    -------
+    float
+        Safely converted float value
+    """
+    if value is None:
+        return default
+    if isinstance(value, pd.Series):
+        if value.empty:
+            return default
+        val = value.iloc[-1]
+        if pd.isna(val):
+            return default
+        return float(val)
+    if isinstance(value, (int, float)):
+        if np.isnan(value):
+            return default
+        return float(value)
+    return default
+
+
+def safe_trend(value: Union[float, pd.Series, None], default: Optional[float] = None) -> Optional[float]:
+    """
+    Safely extract trend value from pandas Series or float
+    
+    Parameters
+    ----------
+    value : float, pd.Series, or None
+        Input value
+    default : float or None
+        Default return value
+    
+    Returns
+    -------
+    float or None
+        Safely extracted trend value
+    """
+    if value is None:
+        return default
+    if isinstance(value, pd.Series):
+        if value.empty:
+            return default
+        val = value.iloc[-1]
+        if pd.isna(val):
+            return default
+        return float(val)
+    if isinstance(value, (int, float)):
+        if np.isnan(value):
+            return default
+        return float(value)
+    return default
 
 
 def render_css() -> None:
@@ -244,23 +309,55 @@ def create_smart_kpi_row(yield_df: pd.DataFrame, spreads: pd.DataFrame, regime: 
     vix_data : pd.Series, optional
         VIX time series for trend calculation
     """
-    current_2y = yield_df["2Y"].iloc[-1] if "2Y" in yield_df.columns else np.nan
-    current_10y = yield_df["10Y"].iloc[-1] if "10Y" in yield_df.columns else np.nan
-    current_spread = spreads["10Y-2Y"].iloc[-1] if "10Y-2Y" in spreads.columns else np.nan
+    # Safe extraction of current values
+    if "2Y" in yield_df.columns and not yield_df["2Y"].empty:
+        current_2y = safe_float(yield_df["2Y"], np.nan)
+    else:
+        current_2y = np.nan
+    
+    if "10Y" in yield_df.columns and not yield_df["10Y"].empty:
+        current_10y = safe_float(yield_df["10Y"], np.nan)
+    else:
+        current_10y = np.nan
+    
+    if "10Y-2Y" in spreads.columns and not spreads["10Y-2Y"].empty:
+        current_spread = safe_float(spreads["10Y-2Y"], np.nan)
+    else:
+        current_spread = np.nan
     
     # Calculate 20-day trends
+    trend_2y = None
+    trend_10y = None
+    
     if "2Y" in yield_df.columns and len(yield_df) > 20:
-        trend_2y = (yield_df["2Y"].iloc[-1] - yield_df["2Y"].iloc[-20]) / yield_df["2Y"].iloc[-20] * 100
-        trend_10y = (yield_df["10Y"].iloc[-1] - yield_df["10Y"].iloc[-20]) / yield_df["10Y"].iloc[-20] * 100
-    else:
-        trend_2y = trend_10y = None
+        try:
+            old_2y = safe_float(yield_df["2Y"].iloc[-20], np.nan)
+            if not np.isnan(old_2y) and not np.isnan(current_2y) and old_2y != 0:
+                trend_2y = (current_2y - old_2y) / old_2y * 100
+        except Exception:
+            pass
+    
+    if "10Y" in yield_df.columns and len(yield_df) > 20:
+        try:
+            old_10y = safe_float(yield_df["10Y"].iloc[-20], np.nan)
+            if not np.isnan(old_10y) and not np.isnan(current_10y) and old_10y != 0:
+                trend_10y = (current_10y - old_10y) / old_10y * 100
+        except Exception:
+            pass
     
     # VIX trend
-    current_vix = vix_data.iloc[-1] if vix_data is not None and not vix_data.empty else np.nan
-    if vix_data is not None and not vix_data.empty and len(vix_data) > 20:
-        trend_vix = (vix_data.iloc[-1] - vix_data.iloc[-20]) / vix_data.iloc[-20] * 100
-    else:
-        trend_vix = None
+    current_vix = np.nan
+    trend_vix = None
+    
+    if vix_data is not None and not vix_data.empty:
+        current_vix = safe_float(vix_data, np.nan)
+        if len(vix_data) > 20:
+            try:
+                old_vix = safe_float(vix_data.iloc[-20], np.nan)
+                if not np.isnan(old_vix) and not np.isnan(current_vix) and old_vix != 0:
+                    trend_vix = (current_vix - old_vix) / old_vix * 100
+            except Exception:
+                pass
     
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     
@@ -268,20 +365,23 @@ def create_smart_kpi_row(yield_df: pd.DataFrame, spreads: pd.DataFrame, regime: 
         kpi_card("📊 Macro Regime", regime, regime_text)
     
     with col2:
-        kpi_card("🏦 2Y Yield", f"{current_2y:.2f}%" if np.isfinite(current_2y) else "N/A", "Policy anchor", trend_2y, "20d")
+        value_2y = f"{current_2y:.2f}%" if not np.isnan(current_2y) else "N/A"
+        kpi_card("🏦 2Y Yield", value_2y, "Policy anchor", trend_2y, "20d")
     
     with col3:
-        kpi_card("📈 10Y Yield", f"{current_10y:.2f}%" if np.isfinite(current_10y) else "N/A", "Benchmark", trend_10y, "20d")
+        value_10y = f"{current_10y:.2f}%" if not np.isnan(current_10y) else "N/A"
+        kpi_card("📈 10Y Yield", value_10y, "Benchmark", trend_10y, "20d")
     
     with col4:
-        spread_display = f"{current_spread:.1f} bps" if np.isfinite(current_spread) else "N/A"
+        spread_display = f"{current_spread:.1f} bps" if not np.isnan(current_spread) else "N/A"
         kpi_card("🔄 10Y-2Y Spread", spread_display, "Recession signal")
     
     with col5:
         kpi_card("⚠️ Recession Prob", f"{recession_prob:.1%}", "Proxy estimate")
     
     with col6:
-        kpi_card("📉 VIX", f"{current_vix:.2f}" if np.isfinite(current_vix) else "N/A", "Fear gauge", trend_vix, "20d")
+        vix_display = f"{current_vix:.2f}" if not np.isnan(current_vix) else "N/A"
+        kpi_card("📉 VIX", vix_display, "Fear gauge", trend_vix, "20d")
 
 
 def render_footer() -> None:

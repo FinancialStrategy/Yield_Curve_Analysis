@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from typing import Optional
 
 # Import all modules
 from config import COLORS, MATURITY_MAP, YAHOO_TICKERS, CFG, __version__
@@ -29,7 +30,20 @@ from visuals import (
     chart_monte_carlo, chart_backtest, chart_scenario, chart_correlation,
     chart_technical, chart_ohlc, chart_volatility, chart_forecast
 )
-from ui import render_css, render_header, render_api_gate, create_smart_kpi_row, render_footer
+from ui import render_css, render_header, render_api_gate, create_smart_kpi_row, render_footer, safe_float
+
+
+def safe_series_value(series: pd.Series, default: float = 0.0) -> float:
+    """Safely extract the last value from a pandas Series"""
+    if series is None or series.empty:
+        return default
+    try:
+        val = series.iloc[-1]
+        if pd.isna(val):
+            return default
+        return float(val)
+    except Exception:
+        return default
 
 
 def main():
@@ -181,8 +195,8 @@ def main():
     create_smart_kpi_row(yield_df, spreads, regime, regime_text, rec_prob, vix_data)
     
     # Inversion warning
-    current_spread = spreads["10Y-2Y"].iloc[-1] if "10Y-2Y" in spreads.columns else np.nan
-    if current_spread < 0:
+    current_spread = safe_series_value(spreads["10Y-2Y"]) if "10Y-2Y" in spreads.columns else np.nan
+    if not np.isnan(current_spread) and current_spread < 0:
         st.warning("⚠️ **YIELD CURVE IS INVERTED!** Historically signals recession within 6-18 months.")
     
     # Main tabs
@@ -203,7 +217,9 @@ def main():
     # TAB 1: Yield Curve
     # ========================================================================
     with tabs[0]:
-        st.plotly_chart(chart_yield_curve(maturities, latest_curve, ns_result, nss_result, recessions), use_container_width=True)
+        fig = chart_yield_curve(maturities, latest_curve, ns_result, nss_result, recessions)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
         
         col1, col2 = st.columns(2)
         with col1:
@@ -219,14 +235,18 @@ def main():
     # TAB 2: Spread Analysis
     # ========================================================================
     with tabs[1]:
-        st.plotly_chart(chart_spreads(spreads, recessions), use_container_width=True)
+        fig = chart_spreads(spreads, recessions)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
         
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Current Spreads")
-            current_spreads = spreads.iloc[-1]
-            for name, value in current_spreads.items():
-                st.metric(f"{name.upper()}", f"{value:.2f}%")
+            if not spreads.empty:
+                current_spreads = spreads.iloc[-1]
+                for name, value in current_spreads.items():
+                    if pd.notna(value):
+                        st.metric(f"{name.upper()}", f"{value:.2f}%")
         
         with col2:
             st.subheader("Forward Rates")
@@ -264,7 +284,8 @@ def main():
                 }), hide_index=True, use_container_width=True)
         
         with sub_tabs[1]:
-            st.dataframe(governance_df.round(4), use_container_width=True, hide_index=True)
+            if not governance_df.empty:
+                st.dataframe(governance_df.round(4), use_container_width=True, hide_index=True)
             fig_resid = chart_model_residuals(selected_cols, ns_result, nss_result)
             if fig_resid:
                 st.plotly_chart(fig_resid, use_container_width=True)
@@ -283,9 +304,10 @@ def main():
                 if fig_f:
                     st.plotly_chart(fig_f, use_container_width=True)
             with col2:
-                fig_p = chart_pca(pca_result) if pca_result else None
-                if fig_p:
-                    st.plotly_chart(fig_p, use_container_width=True)
+                if pca_result:
+                    fig_p = chart_pca(pca_result)
+                    if fig_p:
+                        st.plotly_chart(fig_p, use_container_width=True)
     
     # ========================================================================
     # TAB 4: Monte Carlo
@@ -293,16 +315,18 @@ def main():
     with tabs[3]:
         st.subheader(f"Monte Carlo Simulation - {st.session_state.mc_model}")
         
+        current_10y = safe_series_value(yield_df["10Y"]) if "10Y" in yield_df.columns else 4.0
+        
         col1, col2 = st.columns([1, 2])
         with col1:
-            current_10y = yield_df["10Y"].iloc[-1] if "10Y" in yield_df.columns else 4.0
             st.info(f"**Current 10Y Yield:** {current_10y:.2f}%")
-            vol = yield_df["10Y"].pct_change().std() * np.sqrt(252) if "10Y" in yield_df.columns else 0.10
-            st.info(f"**Historical Volatility:** {vol:.2%}")
+            if "10Y" in yield_df.columns:
+                vol = yield_df["10Y"].pct_change().std() * np.sqrt(252)
+                st.info(f"**Historical Volatility:** {vol:.2%}")
         
         if st.button("Run Simulation", use_container_width=True):
             with st.spinner(f"Running {st.session_state.mc_simulations:,} simulations..."):
-                initial_y = yield_df["10Y"].iloc[-1] if "10Y" in yield_df.columns else 4.0
+                initial_y = current_10y
                 returns = yield_df["10Y"].pct_change().dropna()
                 mu = returns.mean() * 252 if len(returns) > 0 else 0
                 sigma = returns.std() * np.sqrt(252) if len(returns) > 0 else 0.10
@@ -326,7 +350,8 @@ def main():
                 col4.metric("Simulations", f"{st.session_state.mc_simulations:,}")
                 
                 fig = chart_monte_carlo(sim_results, initial_y, st.session_state.mc_horizon, f"{model_name} Simulation")
-                st.plotly_chart(fig, use_container_width=True)
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
     
     # ========================================================================
     # TAB 5: Machine Learning
@@ -372,7 +397,8 @@ def main():
                     col4.metric("Win Rate", f"{result['win_rate']:.2%}")
                     
                     fig = chart_backtest(result)
-                    st.plotly_chart(fig, use_container_width=True)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning("Backtest failed. Try different parameters.")
     
@@ -384,14 +410,15 @@ def main():
         
         with col1:
             st.subheader("Volatility Analysis")
-            if not vix_data.empty:
+            if vix_data is not None and not vix_data.empty:
                 vol_regime = VolatilityAnalyzer.calculate_volatility_regime(vix_data)
                 st.metric("Current VIX", f"{vol_regime['current_vix']:.2f}")
                 st.info(f"**Regime:** {vol_regime['regime']}")
                 st.caption(vol_regime['outlook'])
                 
                 fig_vix = chart_volatility(vix_data, vol_regime)
-                st.plotly_chart(fig_vix, use_container_width=True)
+                if fig_vix:
+                    st.plotly_chart(fig_vix, use_container_width=True)
             else:
                 st.info("VIX data unavailable")
             
@@ -406,27 +433,32 @@ def main():
         
         with col2:
             st.subheader("Correlation Analysis")
-            # Simple correlation with 10Y yield
-            if "10Y" in yield_df.columns and not vix_data.empty:
+            if "10Y" in yield_df.columns and vix_data is not None and not vix_data.empty:
                 corr_value = yield_df["10Y"].corr(vix_data)
-                st.metric("10Y vs VIX Correlation", f"{corr_value:.3f}")
+                if not pd.isna(corr_value):
+                    st.metric("10Y vs VIX Correlation", f"{corr_value:.3f}")
     
     # ========================================================================
     # TAB 8: Scenarios
     # ========================================================================
     with tabs[7]:
-        scenario_name = st.selectbox("Select Scenario", list(scenarios.keys()))
-        scenario_df = scenarios[scenario_name]
-        
-        st.plotly_chart(chart_scenario(scenario_df, scenario_name), use_container_width=True)
-        
-        # Show impact table
-        current = yield_df.iloc[-1]
-        impact_df = calculate_scenario_impact(current[selected_cols], scenario_df["Scenario"])
-        st.dataframe(impact_df, use_container_width=True, hide_index=True)
-        
-        # Interpretation
-        st.markdown(f'<div class="info-box">{get_scenario_interpretation(scenario_name)}</div>', unsafe_allow_html=True)
+        if scenarios:
+            scenario_name = st.selectbox("Select Scenario", list(scenarios.keys()))
+            scenario_df = scenarios[scenario_name]
+            
+            fig = chart_scenario(scenario_df, scenario_name)
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Show impact table
+            current = yield_df.iloc[-1]
+            impact_df = calculate_scenario_impact(current[selected_cols], scenario_df["Scenario"])
+            st.dataframe(impact_df, use_container_width=True, hide_index=True)
+            
+            # Interpretation
+            st.markdown(f'<div class="info-box">{get_scenario_interpretation(scenario_name)}</div>', unsafe_allow_html=True)
+        else:
+            st.info("No scenarios available")
     
     # ========================================================================
     # TAB 9: Technical Analysis
