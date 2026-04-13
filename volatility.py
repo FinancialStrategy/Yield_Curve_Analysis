@@ -29,10 +29,13 @@ def safe_float_from_series(value: Union[pd.Series, float, None], default: float 
     if isinstance(value, pd.Series):
         if value.empty:
             return default
-        val = value.iloc[-1]
-        if pd.isna(val):
+        try:
+            val = value.iloc[-1]
+            if pd.isna(val):
+                return default
+            return float(val)
+        except Exception:
             return default
-        return float(val)
     if isinstance(value, (int, float)):
         if np.isnan(value):
             return default

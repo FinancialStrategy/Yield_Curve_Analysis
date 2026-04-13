@@ -1,9 +1,46 @@
 """
 Technical Analysis Module - Indicators for OHLC data
+FIXED: Proper handling of pandas Series values
 """
 
 import pandas as pd
 import numpy as np
+from typing import Dict, Optional, Union
+
+
+def safe_float_from_series(value: Union[pd.Series, float, None], default: float = 50.0) -> float:
+    """
+    Safely convert a value to float, handling pandas Series and NaN values
+    
+    Parameters
+    ----------
+    value : float, pd.Series, or None
+        Input value to convert
+    default : float
+        Default value if conversion fails
+    
+    Returns
+    -------
+    float
+        Safely converted float value
+    """
+    if value is None:
+        return default
+    if isinstance(value, pd.Series):
+        if value.empty:
+            return default
+        try:
+            val = value.iloc[-1]
+            if pd.isna(val):
+                return default
+            return float(val)
+        except Exception:
+            return default
+    if isinstance(value, (int, float)):
+        if np.isnan(value):
+            return default
+        return float(value)
+    return default
 
 
 # =============================================================================
@@ -153,7 +190,7 @@ def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def get_technical_signals(tech_df: pd.DataFrame) -> dict:
+def get_technical_signals(tech_df: pd.DataFrame) -> Dict[str, str]:
     """
     Generate trading signals based on technical indicators
     
@@ -167,45 +204,66 @@ def get_technical_signals(tech_df: pd.DataFrame) -> dict:
     dict
         Current technical signals for each indicator
     """
-    if tech_df.empty:
-        return {}
+    if tech_df is None or tech_df.empty:
+        return {
+            "RSI": "N/A",
+            "MACD": "N/A",
+            "Trend": "N/A",
+            "Bollinger": "N/A"
+        }
     
-    latest = tech_df.iloc[-1]
     signals = {}
     
-    # RSI signal
-    rsi_val = latest.get("RSI", 50)
-    if rsi_val < 30:
-        signals["RSI"] = "Oversold (Buy Signal)"
-    elif rsi_val > 70:
-        signals["RSI"] = "Overbought (Sell Signal)"
+    # RSI signal - safely extract float value
+    if "RSI" in tech_df.columns:
+        rsi_val = safe_float_from_series(tech_df["RSI"], 50.0)
+        
+        if rsi_val < 30:
+            signals["RSI"] = "Oversold (Buy Signal)"
+        elif rsi_val > 70:
+            signals["RSI"] = "Overbought (Sell Signal)"
+        else:
+            signals["RSI"] = "Neutral"
     else:
-        signals["RSI"] = "Neutral"
+        signals["RSI"] = "N/A"
     
-    # MACD signal
-    macd_val = latest.get("MACD", 0)
-    signal_val = latest.get("MACD_Signal", 0)
-    if macd_val > signal_val:
-        signals["MACD"] = "Bullish (MACD above Signal)"
+    # MACD signal - safely extract values
+    if "MACD" in tech_df.columns and "MACD_Signal" in tech_df.columns:
+        macd_val = safe_float_from_series(tech_df["MACD"], 0.0)
+        signal_val = safe_float_from_series(tech_df["MACD_Signal"], 0.0)
+        
+        if macd_val > signal_val:
+            signals["MACD"] = "Bullish (MACD above Signal)"
+        else:
+            signals["MACD"] = "Bearish (MACD below Signal)"
     else:
-        signals["MACD"] = "Bearish (MACD below Signal)"
+        signals["MACD"] = "N/A"
     
-    # Price vs SMA
-    price = latest.get("Close", 0)
-    sma50 = latest.get("SMA_50", price)
-    if price > sma50:
-        signals["Trend"] = "Above SMA50 (Uptrend)"
+    # Price vs SMA trend - safely extract values
+    if "Close" in tech_df.columns and "SMA_50" in tech_df.columns:
+        price = safe_float_from_series(tech_df["Close"], 0.0)
+        sma50 = safe_float_from_series(tech_df["SMA_50"], price)
+        
+        if price > sma50:
+            signals["Trend"] = "Above SMA50 (Uptrend)"
+        else:
+            signals["Trend"] = "Below SMA50 (Downtrend)"
     else:
-        signals["Trend"] = "Below SMA50 (Downtrend)"
+        signals["Trend"] = "N/A"
     
-    # Bollinger Bands
-    bb_upper = latest.get("BB_Upper", price + 1)
-    bb_lower = latest.get("BB_Lower", price - 1)
-    if price > bb_upper:
-        signals["Bollinger"] = "Above Upper Band (Overextended)"
-    elif price < bb_lower:
-        signals["Bollinger"] = "Below Lower Band (Oversold)"
+    # Bollinger Bands signal
+    if "Close" in tech_df.columns and "BB_Upper" in tech_df.columns and "BB_Lower" in tech_df.columns:
+        price = safe_float_from_series(tech_df["Close"], 0.0)
+        bb_upper = safe_float_from_series(tech_df["BB_Upper"], price + 1)
+        bb_lower = safe_float_from_series(tech_df["BB_Lower"], price - 1)
+        
+        if price > bb_upper:
+            signals["Bollinger"] = "Above Upper Band (Overextended)"
+        elif price < bb_lower:
+            signals["Bollinger"] = "Below Lower Band (Oversold)"
+        else:
+            signals["Bollinger"] = "Within Bands (Normal)"
     else:
-        signals["Bollinger"] = "Within Bands (Normal)"
+        signals["Bollinger"] = "N/A"
     
     return signals
