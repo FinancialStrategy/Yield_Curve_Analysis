@@ -32,10 +32,13 @@ def safe_float(value: Union[float, pd.Series, None], default: float = 0.0) -> fl
     if isinstance(value, pd.Series):
         if value.empty:
             return default
-        val = value.iloc[-1]
-        if pd.isna(val):
+        try:
+            val = value.iloc[-1]
+            if pd.isna(val):
+                return default
+            return float(val)
+        except Exception:
             return default
-        return float(val)
     if isinstance(value, (int, float)):
         if np.isnan(value):
             return default
@@ -64,10 +67,13 @@ def safe_trend(value: Union[float, pd.Series, None], default: Optional[float] = 
     if isinstance(value, pd.Series):
         if value.empty:
             return default
-        val = value.iloc[-1]
-        if pd.isna(val):
+        try:
+            val = value.iloc[-1]
+            if pd.isna(val):
+                return default
+            return float(val)
+        except Exception:
             return default
-        return float(val)
     if isinstance(value, (int, float)):
         if np.isnan(value):
             return default

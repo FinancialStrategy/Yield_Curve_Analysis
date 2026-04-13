@@ -1,10 +1,43 @@
 """
 Volatility and Correlation Analysis Module
+FIXED: Proper handling of pandas Series values
 """
 
 import pandas as pd
 import numpy as np
-from typing import Dict
+from typing import Dict, Union, Optional
+
+
+def safe_float_from_series(value: Union[pd.Series, float, None], default: float = 0.0) -> float:
+    """
+    Safely convert a value to float, handling pandas Series and NaN values
+    
+    Parameters
+    ----------
+    value : float, pd.Series, or None
+        Input value to convert
+    default : float
+        Default value if conversion fails
+    
+    Returns
+    -------
+    float
+        Safely converted float value
+    """
+    if value is None:
+        return default
+    if isinstance(value, pd.Series):
+        if value.empty:
+            return default
+        val = value.iloc[-1]
+        if pd.isna(val):
+            return default
+        return float(val)
+    if isinstance(value, (int, float)):
+        if np.isnan(value):
+            return default
+        return float(value)
+    return default
 
 
 class VolatilityAnalyzer:
@@ -13,45 +46,67 @@ class VolatilityAnalyzer:
     """
     
     @staticmethod
-    def calculate_volatility_regime(vix: pd.Series) -> Dict:
+    def calculate_volatility_regime(vix: Union[pd.Series, float, None]) -> Dict:
         """
         Classify current volatility regime based on VIX level
         
         Parameters
         ----------
-        vix : pd.Series
-            VIX time series data
+        vix : pd.Series, float, or None
+            VIX time series data or current VIX value
         
         Returns
         -------
         dict
             Current VIX value, regime classification, and outlook
         """
-        if vix.empty:
-            return {"current_vix": 0, "regime": "N/A", "outlook": "Data unavailable", "vix_percentile": "N/A"}
+        # Safely extract current VIX value
+        current_vix = safe_float_from_series(vix, 0.0)
         
-        current_vix = vix.iloc[-1]
+        if current_vix <= 0:
+            return {
+                "current_vix": 0.0,
+                "regime": "N/A",
+                "outlook": "Data unavailable",
+                "vix_percentile": "N/A"
+            }
         
+        # Classify regime
         if current_vix < 12:
-            regime, outlook = "EXTREME COMPLACENCY", "High risk of volatility spike"
+            regime = "EXTREME COMPLACENCY"
+            outlook = "High risk of volatility spike"
         elif current_vix < 15:
-            regime, outlook = "LOW VOLATILITY", "Normal complacent market"
+            regime = "LOW VOLATILITY"
+            outlook = "Normal complacent market"
         elif current_vix < 20:
-            regime, outlook = "NORMAL VOLATILITY", "Typical market conditions"
+            regime = "NORMAL VOLATILITY"
+            outlook = "Typical market conditions"
         elif current_vix < 25:
-            regime, outlook = "ELEVATED VOLATILITY", "Increased uncertainty"
+            regime = "ELEVATED VOLATILITY"
+            outlook = "Increased uncertainty"
         elif current_vix < 35:
-            regime, outlook = "HIGH VOLATILITY", "Market stress, consider hedging"
+            regime = "HIGH VOLATILITY"
+            outlook = "Market stress, consider hedging"
         else:
-            regime, outlook = "EXTREME VOLATILITY", "Crisis conditions, defensive positioning"
+            regime = "EXTREME VOLATILITY"
+            outlook = "Crisis conditions, defensive positioning"
         
-        percentile = (vix < current_vix).mean()
+        # Calculate percentile if vix is a Series with data
+        percentile = "N/A"
+        if isinstance(vix, pd.Series) and not vix.empty and len(vix) > 0:
+            try:
+                vix_clean = vix.dropna()
+                if len(vix_clean) > 0:
+                    percentile_val = (vix_clean < current_vix).mean()
+                    percentile = f"{percentile_val * 100:.1f}%"
+            except Exception:
+                pass
         
         return {
-            "current_vix": float(current_vix),
+            "current_vix": current_vix,
             "regime": regime,
             "outlook": outlook,
-            "vix_percentile": f"{percentile * 100:.1f}%",
+            "vix_percentile": percentile,
         }
     
     @staticmethod
@@ -71,10 +126,22 @@ class VolatilityAnalyzer:
         pd.Series
             Volatility of volatility series
         """
-        if vix.empty or len(vix) < window:
+        if vix is None or vix.empty or len(vix) < window:
             return pd.Series(dtype=float)
         
-        return vix.pct_change().rolling(window).std() * np.sqrt(252)
+        try:
+            # Ensure vix is a Series with proper values
+            vix_clean = vix.dropna()
+            if len(vix_clean) < window:
+                return pd.Series(dtype=float)
+            
+            returns = vix_clean.pct_change().dropna()
+            if len(returns) < window:
+                return pd.Series(dtype=float)
+            
+            return returns.rolling(window).std() * np.sqrt(252)
+        except Exception:
+            return pd.Series(dtype=float)
 
 
 class CorrelationAnalyzer:
@@ -97,11 +164,16 @@ class CorrelationAnalyzer:
         pd.DataFrame
             Correlation matrix
         """
-        if assets_df.empty:
+        if assets_df is None or assets_df.empty:
             return pd.DataFrame()
         
-        returns = assets_df.pct_change().dropna()
-        return returns.corr()
+        try:
+            returns = assets_df.pct_change().dropna()
+            if returns.empty or returns.shape[1] < 2:
+                return pd.DataFrame()
+            return returns.corr()
+        except Exception:
+            return pd.DataFrame()
     
     @staticmethod
     def calculate_rolling_correlation(asset1: pd.Series, asset2: pd.Series, window: int = 60) -> pd.Series:
@@ -122,10 +194,24 @@ class CorrelationAnalyzer:
         pd.Series
             Rolling correlation series
         """
-        if asset1.empty or asset2.empty or len(asset1) < window:
+        if asset1 is None or asset2 is None or asset1.empty or asset2.empty:
             return pd.Series(dtype=float)
         
-        returns1 = asset1.pct_change()
-        returns2 = asset2.pct_change()
+        if len(asset1) < window or len(asset2) < window:
+            return pd.Series(dtype=float)
         
-        return returns1.rolling(window).corr(returns2)
+        try:
+            returns1 = asset1.pct_change().dropna()
+            returns2 = asset2.pct_change().dropna()
+            
+            # Align indices
+            common_idx = returns1.index.intersection(returns2.index)
+            if len(common_idx) < window:
+                return pd.Series(dtype=float)
+            
+            returns1 = returns1.reindex(common_idx)
+            returns2 = returns2.reindex(common_idx)
+            
+            return returns1.rolling(window).corr(returns2)
+        except Exception:
+            return pd.Series(dtype=float)

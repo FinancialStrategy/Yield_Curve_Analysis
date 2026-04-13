@@ -403,7 +403,7 @@ def main():
                     st.warning("Backtest failed. Try different parameters.")
     
     # ========================================================================
-    # TAB 7: Risk & Volatility
+    # TAB 7: Risk & Volatility (FIXED SECTION)
     # ========================================================================
     with tabs[6]:
         col1, col2 = st.columns(2)
@@ -411,14 +411,19 @@ def main():
         with col1:
             st.subheader("Volatility Analysis")
             if vix_data is not None and not vix_data.empty:
-                vol_regime = VolatilityAnalyzer.calculate_volatility_regime(vix_data)
-                st.metric("Current VIX", f"{vol_regime['current_vix']:.2f}")
-                st.info(f"**Regime:** {vol_regime['regime']}")
-                st.caption(vol_regime['outlook'])
-                
-                fig_vix = chart_volatility(vix_data, vol_regime)
-                if fig_vix:
-                    st.plotly_chart(fig_vix, use_container_width=True)
+                # Clean the VIX data by dropping NaN values
+                vix_clean = vix_data.dropna()
+                if not vix_clean.empty:
+                    vol_regime = VolatilityAnalyzer.calculate_volatility_regime(vix_clean)
+                    st.metric("Current VIX", f"{vol_regime['current_vix']:.2f}")
+                    st.info(f"**Regime:** {vol_regime['regime']}")
+                    st.caption(vol_regime['outlook'])
+                    
+                    fig_vix = chart_volatility(vix_clean, vol_regime)
+                    if fig_vix:
+                        st.plotly_chart(fig_vix, use_container_width=True)
+                else:
+                    st.info("VIX data is empty after cleaning")
             else:
                 st.info("VIX data unavailable")
             
@@ -434,9 +439,22 @@ def main():
         with col2:
             st.subheader("Correlation Analysis")
             if "10Y" in yield_df.columns and vix_data is not None and not vix_data.empty:
-                corr_value = yield_df["10Y"].corr(vix_data)
-                if not pd.isna(corr_value):
-                    st.metric("10Y vs VIX Correlation", f"{corr_value:.3f}")
+                # Clean the VIX data
+                vix_clean = vix_data.dropna()
+                # Align indices
+                common_idx = yield_df["10Y"].index.intersection(vix_clean.index)
+                if len(common_idx) > 0:
+                    yield_aligned = yield_df["10Y"].reindex(common_idx)
+                    vix_aligned = vix_clean.reindex(common_idx)
+                    corr_value = yield_aligned.corr(vix_aligned)
+                    if not pd.isna(corr_value):
+                        st.metric("10Y vs VIX Correlation", f"{corr_value:.3f}")
+                    else:
+                        st.info("Correlation calculation returned NaN")
+                else:
+                    st.info("No overlapping dates for correlation analysis")
+            else:
+                st.info("Insufficient data for correlation analysis")
     
     # ========================================================================
     # TAB 8: Scenarios
