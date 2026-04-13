@@ -1,5 +1,6 @@
 """
 Visualization Module - All charting functions
+Version 37.1 - Fully Functional with Visible Technical Charts
 """
 
 import numpy as np
@@ -284,58 +285,51 @@ def chart_correlation(matrix: pd.DataFrame) -> go.Figure:
 
 
 def chart_technical(df: pd.DataFrame, ticker: str) -> Optional[go.Figure]:
-    """Plot technical analysis panels (Price, RSI, MACD)"""
-    if df.empty:
+    """
+    Create technical analysis chart - Wrapper for plot_technical_chart
+    This function is maintained for backward compatibility
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with OHLC and technical indicators
+    ticker : str
+        Ticker symbol
+    
+    Returns
+    -------
+    plotly.graph_objects.Figure or None
+        Technical chart
+    """
+    if df is None or df.empty:
         return None
     
-    fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05,
-        row_heights=[0.5, 0.25, 0.25],
-        subplot_titles=(f"{ticker} Price", "RSI (14)", "MACD")
-    )
-    
-    # Price panel
-    fig.add_trace(go.Scatter(
-        x=df.index, y=df["Close"], mode="lines", name="Close",
-        line=dict(color=COLORS["accent"], width=2)
-    ), row=1, col=1)
-    
-    if "BB_Upper" in df.columns:
-        fig.add_trace(go.Scatter(
-            x=df.index, y=df["BB_Upper"], mode="lines", name="BB Upper",
-            line=dict(color=COLORS["muted"], width=1)
-        ), row=1, col=1)
-        fig.add_trace(go.Scatter(
-            x=df.index, y=df["BB_Lower"], mode="lines", name="BB Lower",
-            line=dict(color=COLORS["muted"], width=1), fill='tonexty', fillcolor=COLORS["band"]
-        ), row=1, col=1)
-    
-    # RSI panel
-    if "RSI" in df.columns:
-        fig.add_trace(go.Scatter(
-            x=df.index, y=df["RSI"], mode="lines", name="RSI",
-            line=dict(color=COLORS["accent2"], width=1.5)
-        ), row=2, col=1)
-        fig.add_hline(y=70, line_dash="dash", line_color=COLORS["negative"], row=2, col=1)
-        fig.add_hline(y=30, line_dash="dash", line_color=COLORS["positive"], row=2, col=1)
-    
-    # MACD panel
-    if "MACD" in df.columns:
-        fig.add_trace(go.Scatter(
-            x=df.index, y=df["MACD"], mode="lines", name="MACD",
-            line=dict(color=COLORS["positive"], width=1.5)
-        ), row=3, col=1)
-        fig.add_trace(go.Scatter(
-            x=df.index, y=df["MACD_Signal"], mode="lines", name="Signal",
-            line=dict(color=COLORS["negative"], width=1.5)
-        ), row=3, col=1)
+    # Import the plotting function from technical module
+    try:
+        from technical import plot_technical_chart
+        return plot_technical_chart(df, ticker)
+    except ImportError:
+        # Fallback to basic chart if technical module not available
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.6, 0.4], 
+                           subplot_titles=(f"{ticker} Price", "RSI (14)"))
         
-        colors = ['red' if x < 0 else 'green' for x in df["MACD_Hist"]]
-        fig.add_trace(go.Bar(
-            x=df.index, y=df["MACD_Hist"], name="Histogram", marker_color=colors
-        ), row=3, col=1)
-    
-    return chart_layout(fig, f"Technical Analysis - {ticker}", height=760)
+        fig.add_trace(go.Scatter(x=df.index, y=df["Close"], mode="lines", name="Price", 
+                                line=dict(color=COLORS["accent"], width=2)), row=1, col=1)
+        
+        if "RSI" in df.columns:
+            fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], mode="lines", name="RSI", 
+                                    line=dict(color=COLORS["accent2"], width=1.5)), row=2, col=1)
+            fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
+        
+        if "BB_Upper" in df.columns:
+            fig.add_trace(go.Scatter(x=df.index, y=df["BB_Upper"], mode="lines", name="BB Upper", 
+                                    line=dict(color=COLORS["muted"], width=1)), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df["BB_Lower"], mode="lines", name="BB Lower", 
+                                    line=dict(color=COLORS["muted"], width=1), fill='tonexty', 
+                                    fillcolor=COLORS["band"]), row=1, col=1)
+        
+        return chart_layout(fig, f"Technical Analysis - {ticker}", height=600)
 
 
 def chart_ohlc(df: pd.DataFrame, ticker: str) -> Optional[go.Figure]:
@@ -374,23 +368,35 @@ def chart_volatility(vix_data: pd.Series, vol_regime: dict) -> go.Figure:
     
     fig.add_trace(go.Scatter(
         x=vix_data.index, y=vix_data.values, mode='lines', name='VIX',
-        line=dict(color=COLORS["warning"], width=2)
+        line=dict(color=COLORS["warning"], width=2), fill='tozeroy',
+        fillcolor='rgba(245, 158, 11, 0.1)'
     ), row=1, col=1)
     
     fig.add_hline(y=20, line_dash="dash", line_color="orange", row=1, col=1)
     fig.add_hline(y=15, line_dash="dash", line_color="green", row=1, col=1)
     
     # Vol of vol
-    from volatility import VolatilityAnalyzer
-    vol_of_vol = VolatilityAnalyzer.calculate_vol_of_vol(vix_data)
+    try:
+        from volatility import VolatilityAnalyzer
+        vol_of_vol = VolatilityAnalyzer.calculate_vol_of_vol(vix_data)
+        
+        if len(vol_of_vol) > 0:
+            fig.add_trace(go.Scatter(
+                x=vol_of_vol.index, y=vol_of_vol.values, mode='lines', name='Vol of Vol',
+                line=dict(color=COLORS["accent"], width=2)
+            ), row=2, col=1)
+    except Exception:
+        pass
     
-    if len(vol_of_vol) > 0:
-        fig.add_trace(go.Scatter(
-            x=vol_of_vol.index, y=vol_of_vol.values, mode='lines', name='Vol of Vol',
-            line=dict(color=COLORS["accent"], width=2)
-        ), row=2, col=1)
+    fig.update_layout(
+        title=f"VIX Dashboard | Current: {vol_regime['current_vix']:.2f} - {vol_regime['regime']}",
+        xaxis_title="Date",
+        yaxis_title="VIX",
+        template="plotly_white",
+        height=600
+    )
     
-    return chart_layout(fig, f"VIX Dashboard | Current: {vol_regime['current_vix']:.2f}", height=600)
+    return fig
 
 
 def chart_forecast(forecast_df: pd.DataFrame) -> go.Figure:

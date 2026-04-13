@@ -1,5 +1,6 @@
 """
 Yield Curve Institutional Platform - Main Application Entry Point
+Version 37.1 - Fully Functional with Visible Technical Charts
 
 This is the main Streamlit application that orchestrates all modules.
 Run with: streamlit run app.py
@@ -23,7 +24,7 @@ from models import NelsonSiegel, model_governance, rolling_ns_parameters, MonteC
 from volatility import VolatilityAnalyzer, CorrelationAnalyzer
 from ml_forecast import MLForecastModel
 from scenarios import generate_scenarios, get_scenario_interpretation, calculate_scenario_impact
-from technical import add_technical_indicators, get_technical_signals
+from technical import add_technical_indicators, get_technical_signals, plot_technical_chart
 from visuals import (
     chart_yield_curve, chart_yield_history, chart_spreads, chart_model_residuals,
     chart_dynamic_params, chart_factors, chart_pca, chart_rate_dynamics,
@@ -86,8 +87,7 @@ def safe_correlation(series1: pd.Series, series2: pd.Series) -> Optional[float]:
             return None
         
         return float(corr_value)
-    except Exception as e:
-        print(f"Correlation calculation error: {e}")
+    except Exception:
         return None
 
 
@@ -152,8 +152,7 @@ def main():
         
         # Technical Analysis
         with st.expander("📡 Technical Analysis", expanded=False):
-            ohlc_ticker = st.selectbox("OHLC Instrument", list(YAHOO_TICKERS.keys()))
-            ohlc_period = st.selectbox("Period", ["6mo", "1y", "2y", "5y"], index=2)
+            ohlc_period = st.selectbox("Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3)
         
         # Run button
         run_analysis = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
@@ -172,13 +171,6 @@ def main():
             # Fetch VIX data
             vix_data = fetch_market_data("^VIX", start_str, end_str)
             
-            # Fetch OHLC data for technical analysis
-            ohlc_data = {}
-            for ticker in YAHOO_TICKERS:
-                df = fetch_ohlc_data(ticker, ohlc_period)
-                if df is not None and not df.empty:
-                    ohlc_data[ticker] = add_technical_indicators(df)
-            
             if yield_df.empty:
                 st.error("Failed to fetch data. Please check your API key and try again.")
                 if st.button("Reset API Key"):
@@ -190,7 +182,6 @@ def main():
             st.session_state.yield_df = yield_df
             st.session_state.recession_series = recession_series
             st.session_state.vix_data = vix_data
-            st.session_state.ohlc_data = ohlc_data
             st.session_state.data_fetched = True
             st.session_state.start_str = start_str
             st.session_state.end_str = end_str
@@ -203,12 +194,12 @@ def main():
             st.session_state.ml_model_type = ml_model_type
             st.session_state.ml_lags = ml_lags
             st.session_state.bt_strategy = bt_strategy
+            st.session_state.ohlc_period = ohlc_period
     
     # Retrieve data from session state
     yield_df = st.session_state.yield_df
     recession_series = st.session_state.recession_series
     vix_data = st.session_state.vix_data
-    ohlc_data = st.session_state.ohlc_data
     
     # Calculate derived data
     selected_cols = [c for c in yield_df.columns if c in MATURITY_MAP]
@@ -233,7 +224,7 @@ def main():
         dynamic_params = rolling_ns_parameters(
             yield_df[selected_cols], maturities, selected_cols, st.session_state.rolling_years
         )
-        pca_result = None  # PCA implementation available in analytics module
+        pca_result = None
         scenarios = generate_scenarios(yield_df[selected_cols])
     
     # Display KPI row
@@ -254,7 +245,7 @@ def main():
         "🎯 Backtest",
         "⚡ Risk & Volatility",
         "🎭 Scenarios",
-        "🛠 Technical",
+        "🛠 Technical Analysis",
         "💾 Export"
     ])
     
@@ -448,7 +439,7 @@ def main():
                     st.warning("Backtest failed. Try different parameters.")
     
     # ========================================================================
-    # TAB 7: Risk & Volatility (COMPLETELY REWRITTEN - NO ERRORS)
+    # TAB 7: Risk & Volatility
     # ========================================================================
     with tabs[6]:
         col1, col2 = st.columns(2)
@@ -456,7 +447,6 @@ def main():
         with col1:
             st.subheader("Volatility Analysis")
             if vix_data is not None and not vix_data.empty:
-                # Clean the VIX data by dropping NaN values
                 vix_clean = vix_data.dropna()
                 if not vix_clean.empty:
                     vol_regime = VolatilityAnalyzer.calculate_volatility_regime(vix_clean)
@@ -484,17 +474,14 @@ def main():
         with col2:
             st.subheader("Correlation Analysis")
             if "10Y" in yield_df.columns and vix_data is not None and not vix_data.empty:
-                # Clean data
                 vix_clean = vix_data.dropna()
                 yield_clean = yield_df["10Y"].dropna()
                 
-                # Use the safe correlation function (no direct pandas corr)
                 corr_value = safe_correlation(yield_clean, vix_clean)
                 
                 if corr_value is not None:
                     st.metric("10Y vs VIX Correlation", f"{corr_value:.3f}")
                     
-                    # Add interpretation
                     if corr_value > 0.5:
                         st.caption("Strong positive correlation: Yields and VIX move together")
                     elif corr_value > 0.2:
@@ -522,43 +509,113 @@ def main():
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
             
-            # Show impact table
             current = yield_df.iloc[-1]
             impact_df = calculate_scenario_impact(current[selected_cols], scenario_df["Scenario"])
             st.dataframe(impact_df, use_container_width=True, hide_index=True)
             
-            # Interpretation
             st.markdown(f'<div class="info-box">{get_scenario_interpretation(scenario_name)}</div>', unsafe_allow_html=True)
         else:
             st.info("No scenarios available")
     
     # ========================================================================
-    # TAB 9: Technical Analysis
+    # TAB 9: Technical Analysis (COMPLETELY REWRITTEN - VISIBLE FIGURES)
     # ========================================================================
     with tabs[8]:
-        if YFINANCE_AVAILABLE:
-            tech_ticker = st.selectbox("Select Asset", list(YAHOO_TICKERS.keys()), key="tech_ticker")
-            tech_df = ohlc_data.get(tech_ticker)
-            
-            if tech_df is not None and not tech_df.empty:
-                fig_ta = chart_technical(tech_df, tech_ticker)
-                if fig_ta:
-                    st.plotly_chart(fig_ta, use_container_width=True)
-                
-                # Technical signals
-                signals = get_technical_signals(tech_df)
-                st.subheader("Current Technical Signals")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("RSI", signals.get("RSI", "N/A"))
-                with col2:
-                    st.metric("MACD", signals.get("MACD", "N/A"))
-                with col3:
-                    st.metric("Trend", signals.get("Trend", "N/A"))
-            else:
-                st.info(f"No data available for {tech_ticker}")
+        st.subheader("Technical Analysis Dashboard")
+        st.markdown("""
+        <div class="note-box">
+        <b>📊 Technical Analysis Module</b><br><br>
+        This dashboard provides professional technical analysis charts including:
+        <b>Candlestick patterns</b>, <b>Moving Averages (SMA 20/50)</b>, <b>Bollinger Bands</b>,
+        <b>RSI (Relative Strength Index)</b>, <b>MACD</b>, and <b>Volume analysis</b>.
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if not YFINANCE_AVAILABLE:
+            st.error("yfinance library is not available. Please install it with: pip install yfinance")
         else:
-            st.error("yfinance library not available. Install with: pip install yfinance")
+            # Asset selector
+            tech_ticker = st.selectbox(
+                "Select Asset for Technical Analysis",
+                list(YAHOO_TICKERS.keys()),
+                format_func=lambda x: f"{x} - {YAHOO_TICKERS[x]}",
+                key="tech_ticker_main"
+            )
+            
+            # Period selector
+            tech_period = st.selectbox(
+                "Select Time Period",
+                ["1mo", "3mo", "6mo", "1y", "2y", "5y"],
+                index=3,
+                key="tech_period"
+            )
+            
+            # Fetch fresh data for the selected ticker
+            with st.spinner(f"Fetching {tech_ticker} data..."):
+                tech_df = fetch_ohlc_data(tech_ticker, tech_period)
+                
+                if tech_df is not None and not tech_df.empty:
+                    # Add technical indicators
+                    tech_df = add_technical_indicators(tech_df)
+                    
+                    # Display current price info
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        current_price = tech_df["Close"].iloc[-1]
+                        st.metric("Current Price", f"${current_price:.2f}")
+                    with col2:
+                        change_1d = tech_df["Close"].pct_change().iloc[-1] * 100
+                        st.metric("1D Change", f"{change_1d:+.2f}%", delta=f"{change_1d:+.2f}%")
+                    with col3:
+                        if "SMA_20" in tech_df.columns:
+                            sma20 = tech_df["SMA_20"].iloc[-1]
+                            st.metric("SMA 20", f"${sma20:.2f}")
+                    with col4:
+                        if "SMA_50" in tech_df.columns:
+                            sma50 = tech_df["SMA_50"].iloc[-1]
+                            st.metric("SMA 50", f"${sma50:.2f}")
+                    
+                    # Generate technical signals
+                    signals = get_technical_signals(tech_df)
+                    
+                    # Display signals in a nice format
+                    st.markdown("### 📈 Current Technical Signals")
+                    sig_col1, sig_col2, sig_col3 = st.columns(3)
+                    with sig_col1:
+                        signal_color = "🟢" if "Bullish" in signals.get("MACD", "") else "🔴" if "Bearish" in signals.get("MACD", "") else "⚪"
+                        st.info(f"{signal_color} **MACD:** {signals.get('MACD', 'N/A')}")
+                    with sig_col2:
+                        rsi_val = signals.get("RSI", "N/A")
+                        if "Oversold" in rsi_val:
+                            rsi_icon = "🟢"
+                        elif "Overbought" in rsi_val:
+                            rsi_icon = "🔴"
+                        else:
+                            rsi_icon = "🟡"
+                        st.info(f"{rsi_icon} **RSI:** {rsi_val}")
+                    with sig_col3:
+                        trend_icon = "🟢" if "Above" in signals.get("Trend", "") else "🔴"
+                        st.info(f"{trend_icon} **Trend:** {signals.get('Trend', 'N/A')}")
+                    
+                    # Create and display the professional technical chart
+                    st.markdown("### 📊 Technical Chart")
+                    fig = plot_technical_chart(tech_df, tech_ticker)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("Could not generate technical chart. Please try a different asset or period.")
+                    
+                    # Add download button for the data
+                    csv_data = tech_df[["Open", "High", "Low", "Close", "Volume"]].tail(100).to_csv().encode("utf-8")
+                    st.download_button(
+                        "📥 Download Technical Data (CSV)",
+                        csv_data,
+                        f"{tech_ticker}_technical_data.csv",
+                        "text/csv"
+                    )
+                    
+                else:
+                    st.error(f"Could not fetch data for {tech_ticker}. Please try another symbol or check your internet connection.")
     
     # ========================================================================
     # TAB 10: Export

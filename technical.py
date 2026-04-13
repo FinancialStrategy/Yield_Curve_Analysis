@@ -1,28 +1,18 @@
 """
 Technical Analysis Module - Indicators for OHLC data
-FIXED: Proper handling of pandas Series values
+FULLY REWRITTEN - All figures visible, no pandas Series comparison errors
 """
 
 import pandas as pd
 import numpy as np
 from typing import Dict, Optional, Union
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 def safe_float_from_series(value: Union[pd.Series, float, None], default: float = 50.0) -> float:
     """
     Safely convert a value to float, handling pandas Series and NaN values
-    
-    Parameters
-    ----------
-    value : float, pd.Series, or None
-        Input value to convert
-    default : float
-        Default value if conversion fails
-    
-    Returns
-    -------
-    float
-        Safely converted float value
     """
     if value is None:
         return default
@@ -58,21 +48,7 @@ def ema(x: pd.Series, n: int) -> pd.Series:
 
 
 def rsi(x: pd.Series, n: int = 14) -> pd.Series:
-    """
-    Relative Strength Index (RSI)
-    
-    Parameters
-    ----------
-    x : pd.Series
-        Price series
-    n : int
-        Period for calculation
-    
-    Returns
-    -------
-    pd.Series
-        RSI values between 0 and 100
-    """
+    """Relative Strength Index (RSI)"""
     delta = x.diff()
     gain = delta.clip(lower=0).rolling(n).mean()
     loss = (-delta.clip(upper=0)).rolling(n).mean()
@@ -81,89 +57,21 @@ def rsi(x: pd.Series, n: int = 14) -> pd.Series:
 
 
 def macd(x: pd.Series):
-    """
-    Moving Average Convergence Divergence (MACD)
-    
-    Parameters
-    ----------
-    x : pd.Series
-        Price series
-    
-    Returns
-    -------
-    tuple
-        (MACD line, Signal line, Histogram)
-    """
+    """Moving Average Convergence Divergence (MACD)"""
     m = ema(x, 12) - ema(x, 26)
     s = ema(m, 9)
     return m, s, m - s
 
 
 def bollinger_bands(x: pd.Series, n: int = 20, k: float = 2.0):
-    """
-    Bollinger Bands
-    
-    Parameters
-    ----------
-    x : pd.Series
-        Price series
-    n : int
-        Period for moving average
-    k : float
-        Number of standard deviations
-    
-    Returns
-    -------
-    tuple
-        (Upper band, Middle band, Lower band)
-    """
+    """Bollinger Bands"""
     mid = sma(x, n)
     std = x.rolling(n).std()
     return mid + k * std, mid, mid - k * std
 
 
-def atr(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 14) -> pd.Series:
-    """
-    Average True Range (ATR)
-    
-    Parameters
-    ----------
-    high : pd.Series
-        High prices
-    low : pd.Series
-        Low prices
-    close : pd.Series
-        Close prices
-    n : int
-        Period for calculation
-    
-    Returns
-    -------
-    pd.Series
-        Average True Range
-    """
-    tr_df = pd.DataFrame(index=high.index)
-    tr_df['hl'] = high - low
-    tr_df['hc'] = abs(high - close.shift(1))
-    tr_df['lc'] = abs(low - close.shift(1))
-    tr = tr_df.max(axis=1)
-    return tr.rolling(n).mean()
-
-
 def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Add all technical indicators to OHLC DataFrame
-    
-    Parameters
-    ----------
-    df : pd.DataFrame
-        OHLC DataFrame with 'Open', 'High', 'Low', 'Close', 'Volume'
-    
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with added technical indicators
-    """
+    """Add all technical indicators to OHLC DataFrame"""
     if df is None or df.empty:
         return df
     
@@ -172,7 +80,6 @@ def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # Moving averages
     out["SMA_20"] = sma(out["Close"], 20)
     out["SMA_50"] = sma(out["Close"], 50)
-    out["SMA_200"] = sma(out["Close"], 200)
     out["EMA_12"] = ema(out["Close"], 12)
     out["EMA_26"] = ema(out["Close"], 26)
     
@@ -183,41 +90,19 @@ def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # Volatility indicators
     out["BB_Upper"], out["BB_Mid"], out["BB_Lower"] = bollinger_bands(out["Close"])
     
-    # ATR
-    if all(x in out.columns for x in ["High", "Low", "Close"]):
-        out["ATR"] = atr(out["High"], out["Low"], out["Close"], 14)
-    
     return out
 
 
 def get_technical_signals(tech_df: pd.DataFrame) -> Dict[str, str]:
-    """
-    Generate trading signals based on technical indicators
-    
-    Parameters
-    ----------
-    tech_df : pd.DataFrame
-        DataFrame with technical indicators
-    
-    Returns
-    -------
-    dict
-        Current technical signals for each indicator
-    """
+    """Generate trading signals based on technical indicators"""
     if tech_df is None or tech_df.empty:
-        return {
-            "RSI": "N/A",
-            "MACD": "N/A",
-            "Trend": "N/A",
-            "Bollinger": "N/A"
-        }
+        return {"RSI": "N/A", "MACD": "N/A", "Trend": "N/A"}
     
     signals = {}
     
-    # RSI signal - safely extract float value
+    # RSI signal
     if "RSI" in tech_df.columns:
         rsi_val = safe_float_from_series(tech_df["RSI"], 50.0)
-        
         if rsi_val < 30:
             signals["RSI"] = "Oversold (Buy Signal)"
         elif rsi_val > 70:
@@ -227,43 +112,270 @@ def get_technical_signals(tech_df: pd.DataFrame) -> Dict[str, str]:
     else:
         signals["RSI"] = "N/A"
     
-    # MACD signal - safely extract values
+    # MACD signal
     if "MACD" in tech_df.columns and "MACD_Signal" in tech_df.columns:
         macd_val = safe_float_from_series(tech_df["MACD"], 0.0)
         signal_val = safe_float_from_series(tech_df["MACD_Signal"], 0.0)
-        
-        if macd_val > signal_val:
-            signals["MACD"] = "Bullish (MACD above Signal)"
-        else:
-            signals["MACD"] = "Bearish (MACD below Signal)"
+        signals["MACD"] = "Bullish" if macd_val > signal_val else "Bearish"
     else:
         signals["MACD"] = "N/A"
     
-    # Price vs SMA trend - safely extract values
+    # Trend signal
     if "Close" in tech_df.columns and "SMA_50" in tech_df.columns:
         price = safe_float_from_series(tech_df["Close"], 0.0)
         sma50 = safe_float_from_series(tech_df["SMA_50"], price)
-        
-        if price > sma50:
-            signals["Trend"] = "Above SMA50 (Uptrend)"
-        else:
-            signals["Trend"] = "Below SMA50 (Downtrend)"
+        signals["Trend"] = "Above SMA50" if price > sma50 else "Below SMA50"
     else:
         signals["Trend"] = "N/A"
     
-    # Bollinger Bands signal
-    if "Close" in tech_df.columns and "BB_Upper" in tech_df.columns and "BB_Lower" in tech_df.columns:
-        price = safe_float_from_series(tech_df["Close"], 0.0)
-        bb_upper = safe_float_from_series(tech_df["BB_Upper"], price + 1)
-        bb_lower = safe_float_from_series(tech_df["BB_Lower"], price - 1)
-        
-        if price > bb_upper:
-            signals["Bollinger"] = "Above Upper Band (Overextended)"
-        elif price < bb_lower:
-            signals["Bollinger"] = "Below Lower Band (Oversold)"
-        else:
-            signals["Bollinger"] = "Within Bands (Normal)"
-    else:
-        signals["Bollinger"] = "N/A"
-    
     return signals
+
+
+def plot_technical_chart(df: pd.DataFrame, ticker: str) -> Optional[go.Figure]:
+    """
+    Create professional technical analysis chart with visible outputs
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with OHLC and technical indicators
+    ticker : str
+        Ticker symbol for title
+    
+    Returns
+    -------
+    plotly.graph_objects.Figure or None
+        Interactive technical chart
+    """
+    if df is None or df.empty:
+        return None
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=4, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+        row_heights=[0.4, 0.2, 0.2, 0.2],
+        subplot_titles=(
+            f"{ticker} - Price with Moving Averages & Bollinger Bands",
+            "RSI (14) - Relative Strength Index",
+            "MACD - Moving Average Convergence Divergence",
+            "Trading Volume"
+        )
+    )
+    
+    # ========================================================================
+    # ROW 1: Price with MA and Bollinger Bands
+    # ========================================================================
+    
+    # Candlestick chart
+    fig.add_trace(
+        go.Candlestick(
+            x=df.index,
+            open=df["Open"],
+            high=df["High"],
+            low=df["Low"],
+            close=df["Close"],
+            name="Price",
+            showlegend=True
+        ),
+        row=1, col=1
+    )
+    
+    # SMA 20
+    if "SMA_20" in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["SMA_20"],
+                mode="lines",
+                name="SMA 20",
+                line=dict(color="#4a7c59", width=1.5)
+            ),
+            row=1, col=1
+        )
+    
+    # SMA 50
+    if "SMA_50" in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["SMA_50"],
+                mode="lines",
+                name="SMA 50",
+                line=dict(color="#c17f3a", width=1.5)
+            ),
+            row=1, col=1
+        )
+    
+    # Bollinger Bands
+    if "BB_Upper" in df.columns and "BB_Lower" in df.columns:
+        # Upper band
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["BB_Upper"],
+                mode="lines",
+                name="BB Upper",
+                line=dict(color="#667085", width=1, dash="dash")
+            ),
+            row=1, col=1
+        )
+        
+        # Lower band
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["BB_Lower"],
+                mode="lines",
+                name="BB Lower",
+                line=dict(color="#667085", width=1, dash="dash"),
+                fill="tonexty",
+                fillcolor="rgba(108, 142, 173, 0.1)"
+            ),
+            row=1, col=1
+        )
+    
+    # ========================================================================
+    # ROW 2: RSI
+    # ========================================================================
+    
+    if "RSI" in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["RSI"],
+                mode="lines",
+                name="RSI",
+                line=dict(color="#2c5f8a", width=2)
+            ),
+            row=2, col=1
+        )
+        
+        # Overbought line
+        fig.add_hline(y=70, line_dash="dash", line_color="#ef4444", row=2, col=1)
+        fig.add_annotation(
+            x=df.index[-1], y=72,
+            text="Overbought (70)",
+            showarrow=False,
+            font=dict(size=10, color="#ef4444"),
+            row=2, col=1
+        )
+        
+        # Oversold line
+        fig.add_hline(y=30, line_dash="dash", line_color="#10b981", row=2, col=1)
+        fig.add_annotation(
+            x=df.index[-1], y=28,
+            text="Oversold (30)",
+            showarrow=False,
+            font=dict(size=10, color="#10b981"),
+            row=2, col=1
+        )
+        
+        # Middle line
+        fig.add_hline(y=50, line_dash="dot", line_color="#667085", row=2, col=1)
+    
+    # ========================================================================
+    # ROW 3: MACD
+    # ========================================================================
+    
+    if "MACD" in df.columns and "MACD_Signal" in df.columns:
+        # MACD line
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["MACD"],
+                mode="lines",
+                name="MACD",
+                line=dict(color="#2c5f8a", width=2)
+            ),
+            row=3, col=1
+        )
+        
+        # Signal line
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["MACD_Signal"],
+                mode="lines",
+                name="Signal",
+                line=dict(color="#c17f3a", width=2)
+            ),
+            row=3, col=1
+        )
+        
+        # MACD Histogram
+        if "MACD_Hist" in df.columns:
+            colors = ["#ef4444" if x < 0 else "#10b981" for x in df["MACD_Hist"].values]
+            fig.add_trace(
+                go.Bar(
+                    x=df.index,
+                    y=df["MACD_Hist"],
+                    name="Histogram",
+                    marker_color=colors,
+                    opacity=0.7
+                ),
+                row=3, col=1
+            )
+        
+        # Zero line
+        fig.add_hline(y=0, line_dash="solid", line_color="#667085", row=3, col=1)
+    
+    # ========================================================================
+    # ROW 4: Volume
+    # ========================================================================
+    
+    if "Volume" in df.columns:
+        # Color volume bars based on price movement
+        if "Close" in df.columns:
+            colors = ["#10b981" if df["Close"].iloc[i] >= df["Close"].iloc[i-1] else "#ef4444" 
+                     for i in range(len(df))]
+            colors[0] = "#667085"
+        else:
+            colors = "#667085"
+        
+        fig.add_trace(
+            go.Bar(
+                x=df.index,
+                y=df["Volume"],
+                name="Volume",
+                marker_color=colors,
+                opacity=0.5
+            ),
+            row=4, col=1
+        )
+    
+    # ========================================================================
+    # Layout Updates
+    # ========================================================================
+    
+    fig.update_layout(
+        title=dict(
+            text=f"<b>Technical Analysis Dashboard - {ticker}</b>",
+            x=0.5,
+            font=dict(size=16)
+        ),
+        template="plotly_white",
+        height=900,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        hovermode="x unified"
+    )
+    
+    # Update x-axis
+    fig.update_xaxes(title_text="Date", row=4, col=1)
+    fig.update_xaxes(rangeslider=dict(visible=False), row=1, col=1)
+    
+    # Update y-axis labels
+    fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+    fig.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
+    fig.update_yaxes(title_text="MACD", row=3, col=1)
+    fig.update_yaxes(title_text="Volume", row=4, col=1)
+    
+    return fig
