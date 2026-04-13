@@ -10,7 +10,7 @@ from scipy.optimize import minimize
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error, r2_score
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -62,7 +62,7 @@ def fetch_fred_series(api_key, series_id, start_date, end_date):
         if dates:
             return pd.Series(values, index=dates, name=series_id)
         return pd.Series(dtype='float64')
-    except Exception as e:
+    except Exception:
         return pd.Series(dtype='float64')
 
 @st.cache_data(ttl=3600)
@@ -113,6 +113,34 @@ def fetch_yahoo_data(ticker, start_date, end_date):
     except:
         pass
     return pd.Series(dtype='float64')
+
+# =============================================================================
+# SAFE VALUE EXTRACTION HELPER
+# =============================================================================
+
+def safe_float(series, default=0.0):
+    """Safely extract float value from Series or scalar"""
+    if series is None:
+        return default
+    if isinstance(series, pd.Series):
+        if series.empty:
+            return default
+        val = series.iloc[-1]
+        if pd.isna(val):
+            return default
+        return float(val)
+    if isinstance(series, (int, float)):
+        return float(series)
+    return default
+
+def safe_series_val(series, default=0.0):
+    """Safely get last value from Series"""
+    if series is None or series.empty:
+        return default
+    val = series.iloc[-1]
+    if pd.isna(val):
+        return default
+    return float(val)
 
 # =============================================================================
 # MODULE 1: YIELD CURVE ANALYSIS
@@ -198,9 +226,7 @@ def get_recession_probability(spreads):
     """Calculate recession probability from 2s10s spread"""
     if spreads.empty or '2s10s' not in spreads:
         return 0.5
-    current = spreads['2s10s'].iloc[-1]
-    if pd.isna(current):
-        return 0.5
+    current = safe_series_val(spreads['2s10s'], 0.0)
     prob = 1 / (1 + np.exp(-(-current * 2 - 0.5)))
     return min(max(prob, 0.01), 0.99)
 
@@ -261,14 +287,14 @@ def backtest_strategy(df, etf_prices):
     cumulative_strategy = (1 + strategy_returns).cumprod()
     cumulative_benchmark = (1 + returns.fillna(0)).cumprod()
     
-    total_return_strategy = float(cumulative_strategy.iloc[-1] - 1) if len(cumulative_strategy) > 0 else 0.0
-    total_return_benchmark = float(cumulative_benchmark.iloc[-1] - 1) if len(cumulative_benchmark) > 0 else 0.0
+    total_return_strategy = safe_series_val(cumulative_strategy - 1, 0.0)
+    total_return_benchmark = safe_series_val(cumulative_benchmark - 1, 0.0)
     
     sharpe = float((strategy_returns.mean() / strategy_returns.std()) * np.sqrt(252)) if strategy_returns.std() > 0 else 0.0
     
     rolling_max = cumulative_strategy.expanding().max()
     drawdown = (cumulative_strategy - rolling_max) / rolling_max
-    max_drawdown = float(drawdown.min()) if len(drawdown) > 0 else 0.0
+    max_drawdown = safe_series_val(drawdown, 0.0)
     
     non_zero = strategy_returns[strategy_returns != 0]
     win_rate = float((non_zero > 0).sum() / len(non_zero)) if len(non_zero) > 0 else 0.0
@@ -430,11 +456,9 @@ def train_ml_model(X, y, model_type='Random Forest'):
 
 def analyze_volatility(vix_series):
     """Analyze VIX volatility regime"""
-    if vix_series.empty:
-        return {'regime': 'N/A', 'current_vix': 0.0}
+    current = safe_series_val(vix_series, 0.0)
     
-    current = vix_series.iloc[-1]
-    if pd.isna(current):
+    if current <= 0:
         return {'regime': 'N/A', 'current_vix': 0.0}
     
     if current < 15:
@@ -446,7 +470,7 @@ def analyze_volatility(vix_series):
     else:
         regime = "EXTREME VOLATILITY"
     
-    return {'regime': regime, 'current_vix': float(current)}
+    return {'regime': regime, 'current_vix': current}
 
 def plot_vix(vix_series):
     """Plot VIX chart"""
@@ -583,15 +607,10 @@ if run:
         spreads = calculate_spreads(df)
         recession_prob = get_recession_probability(spreads)
         
-        # Current metrics with safe handling
-        current_10y = df['10Y'].iloc[-1] if '10Y' in df and not df['10Y'].empty else 0.0
-        current_10y = float(current_10y) if not pd.isna(current_10y) else 0.0
-        
-        spread_val = spreads['2s10s'].iloc[-1] if '2s10s' in spreads and not spreads['2s10s'].empty else 0.0
-        spread_val = float(spread_val) if not pd.isna(spread_val) else 0.0
-        
-        vix_val = vix_data.iloc[-1] if not vix_data.empty else 0.0
-        vix_val = float(vix_val) if not pd.isna(vix_val) else 0.0
+        # SAFE CURRENT METRICS EXTRACTION - FIXED!
+        current_10y = safe_series_val(df['10Y'], 0.0) if '10Y' in df else 0.0
+        spread_val = safe_series_val(spreads['2s10s'], 0.0) if '2s10s' in spreads else 0.0
+        vix_val = safe_series_val(vix_data, 0.0)
         
         # Display KPIs
         st.subheader("📊 Market Overview")
@@ -619,12 +638,13 @@ if run:
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("Curve Steepness (10Y-2Y)", f"{df['10Y'].iloc[-1] - df['2Y'].iloc[-1]:.2f}%" if '2Y' in df else "N/A")
-                    st.metric("Short End (3M)", f"{df['3M'].iloc[-1]:.2f}%" if '3M' in df else "N/A")
+                    steepness = safe_series_val(df['10Y'] - df['2Y'], 0.0) if '2Y' in df else 0.0
+                    st.metric("Curve Steepness (10Y-2Y)", f"{steepness:.2f}%")
+                    st.metric("Short End (3M)", f"{safe_series_val(df['3M'], 0.0):.2f}%" if '3M' in df else "N/A")
                 with col2:
-                    st.metric("Long End (30Y)", f"{df['30Y'].iloc[-1]:.2f}%" if '30Y' in df else "N/A")
+                    st.metric("Long End (30Y)", f"{safe_series_val(df['30Y'], 0.0):.2f}%" if '30Y' in df else "N/A")
                     if len(df) > 1:
-                        daily_change = df['10Y'].iloc[-1] - df['10Y'].iloc[-2]
+                        daily_change = safe_series_val(df['10Y'], 0.0) - safe_series_val(df['10Y'].shift(1), 0.0)
                         st.metric("10Y Daily Change", f"{daily_change:+.2f}%")
         
         # Module 2: Spread Analysis
@@ -637,12 +657,12 @@ if run:
                 col1, col2 = st.columns(2)
                 with col1:
                     if '2s10s' in spreads:
-                        st.metric("Current 2s10s", f"{spreads['2s10s'].iloc[-1]:.2f}%")
+                        st.metric("Current 2s10s", f"{safe_series_val(spreads['2s10s'], 0.0):.2f}%")
                     if '3m10y' in spreads:
-                        st.metric("Current 3m10y", f"{spreads['3m10y'].iloc[-1]:.2f}%")
+                        st.metric("Current 3m10y", f"{safe_series_val(spreads['3m10y'], 0.0):.2f}%")
                 with col2:
                     if '5s30s' in spreads:
-                        st.metric("Current 5s30s", f"{spreads['5s30s'].iloc[-1]:.2f}%")
+                        st.metric("Current 5s30s", f"{safe_series_val(spreads['5s30s'], 0.0):.2f}%")
                     st.metric("Recession Probability", f"{recession_prob:.1%}")
         
         # Module 3: Trading Strategy (Step 5)
@@ -678,7 +698,8 @@ if run:
                         st.metric("Benchmark Return", f"{backtest_results['total_return_benchmark']:.2%}")
                         st.metric("Max Drawdown", f"{backtest_results['max_drawdown']:.2%}")
                     with col3:
-                        st.metric("Excess Return", f"{backtest_results['total_return_strategy'] - backtest_results['total_return_benchmark']:.2%}")
+                        excess = backtest_results['total_return_strategy'] - backtest_results['total_return_benchmark']
+                        st.metric("Excess Return", f"{excess:.2%}")
                         st.metric("Win Rate", f"{backtest_results['win_rate']:.2%}")
                     
                     fig = plot_backtest_results(backtest_results)
@@ -694,7 +715,7 @@ if run:
                 yields_list = []
                 for m in ['3M', '2Y', '5Y', '10Y', '30Y']:
                     if m in df:
-                        yields_list.append(df[m].iloc[-1])
+                        yields_list.append(safe_series_val(df[m], 0.0))
                     else:
                         yields_list.append(0.0)
                 yields_arr = np.array(yields_list)
@@ -785,7 +806,7 @@ if run:
                     st.plotly_chart(fig, use_container_width=True)
         
         # Module 9: Technical Analysis
-        if m9 and not etf_data.empty:
+        if m9:
             with st.expander("🛠 Module 9: Technical Analysis", expanded=True):
                 tech_ticker = st.selectbox("Select Asset", ['TLT', 'IEF', 'SHY', 'SPY', 'QQQ'], key="tech_ticker")
                 tech_data = fetch_yahoo_data(tech_ticker, start, end)
@@ -795,8 +816,8 @@ if run:
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
                     
-                    rsi_val = calculate_rsi(tech_data).iloc[-1] if len(tech_data) > 14 else 50.0
-                    rsi_val = float(rsi_val) if not pd.isna(rsi_val) else 50.0
+                    rsi_vals = calculate_rsi(tech_data)
+                    rsi_val = safe_series_val(rsi_vals, 50.0)
                     rsi_signal = "Oversold" if rsi_val < 30 else "Overbought" if rsi_val > 70 else "Neutral"
                     st.metric("Current RSI", f"{rsi_val:.1f}", delta=rsi_signal)
                 else:
