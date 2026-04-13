@@ -27,8 +27,6 @@ FRED_SERIES = {
 }
 
 BOND_ETFS = ['TLT', 'IEF', 'SHY', 'BND', 'GOVT']
-VOLATILITY_TICKERS = {'^VIX': 'VIX'}
-CORRELATION_TICKERS = {'^GSPC': 'S&P 500', 'GLD': 'Gold', 'UUP': 'Dollar Index'}
 
 # =============================================================================
 # FRED API FUNCTIONS
@@ -64,7 +62,7 @@ def fetch_fred_series(api_key, series_id, start_date, end_date):
         if dates:
             return pd.Series(values, index=dates, name=series_id)
         return pd.Series(dtype='float64')
-    except:
+    except Exception as e:
         return pd.Series(dtype='float64')
 
 @st.cache_data(ttl=3600)
@@ -93,7 +91,8 @@ def validate_fred_api_key(api_key):
         params = {'series_id': 'DGS10', 'api_key': api_key, 'file_type': 'json', 'limit': 1}
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
-        return 'observations' in response.json()
+        data = response.json()
+        return 'observations' in data
     except:
         return False
 
@@ -217,8 +216,8 @@ def create_trading_strategy(df):
     data = df.copy()
     data['Spread'] = data['10Y'] - data['3M']
     data['Signal'] = 0
-    data.loc[data['Spread'] < 0, 'Signal'] = 1   # Buy when inverted
-    data.loc[data['Spread'] > 0, 'Signal'] = -1  # Sell when normal
+    data.loc[data['Spread'] < 0, 'Signal'] = 1
+    data.loc[data['Spread'] > 0, 'Signal'] = -1
     
     return data[['Spread', 'Signal']]
 
@@ -262,18 +261,17 @@ def backtest_strategy(df, etf_prices):
     cumulative_strategy = (1 + strategy_returns).cumprod()
     cumulative_benchmark = (1 + returns.fillna(0)).cumprod()
     
-    # Calculate metrics
-    total_return_strategy = float(cumulative_strategy.iloc[-1] - 1) if len(cumulative_strategy) > 0 else 0
-    total_return_benchmark = float(cumulative_benchmark.iloc[-1] - 1) if len(cumulative_benchmark) > 0 else 0
+    total_return_strategy = float(cumulative_strategy.iloc[-1] - 1) if len(cumulative_strategy) > 0 else 0.0
+    total_return_benchmark = float(cumulative_benchmark.iloc[-1] - 1) if len(cumulative_benchmark) > 0 else 0.0
     
-    sharpe = float((strategy_returns.mean() / strategy_returns.std()) * np.sqrt(252)) if strategy_returns.std() > 0 else 0
+    sharpe = float((strategy_returns.mean() / strategy_returns.std()) * np.sqrt(252)) if strategy_returns.std() > 0 else 0.0
     
-    # Drawdown
     rolling_max = cumulative_strategy.expanding().max()
     drawdown = (cumulative_strategy - rolling_max) / rolling_max
-    max_drawdown = float(drawdown.min())
+    max_drawdown = float(drawdown.min()) if len(drawdown) > 0 else 0.0
     
-    win_rate = float((strategy_returns > 0).sum() / len(strategy_returns[strategy_returns != 0])) if len(strategy_returns[strategy_returns != 0]) > 0 else 0
+    non_zero = strategy_returns[strategy_returns != 0]
+    win_rate = float((non_zero > 0).sum() / len(non_zero)) if len(non_zero) > 0 else 0.0
     
     return {
         'cumulative_strategy': cumulative_strategy,
@@ -433,9 +431,12 @@ def train_ml_model(X, y, model_type='Random Forest'):
 def analyze_volatility(vix_series):
     """Analyze VIX volatility regime"""
     if vix_series.empty:
-        return {'regime': 'N/A', 'current_vix': 0}
+        return {'regime': 'N/A', 'current_vix': 0.0}
     
     current = vix_series.iloc[-1]
+    if pd.isna(current):
+        return {'regime': 'N/A', 'current_vix': 0.0}
+    
     if current < 15:
         regime = "LOW VOLATILITY"
     elif current < 20:
@@ -445,7 +446,20 @@ def analyze_volatility(vix_series):
     else:
         regime = "EXTREME VOLATILITY"
     
-    return {'regime': regime, 'current_vix': current}
+    return {'regime': regime, 'current_vix': float(current)}
+
+def plot_vix(vix_series):
+    """Plot VIX chart"""
+    if vix_series.empty:
+        return None
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=vix_series.index, y=vix_series.values, fill='tozeroy',
+                            line=dict(color='#c17f3a', width=2)))
+    fig.add_hline(y=20, line_dash='dash', line_color='red')
+    fig.update_layout(title='VIX Historical Chart', xaxis_title='Date',
+                     yaxis_title='VIX', template='plotly_white', height=400)
+    return fig
 
 # =============================================================================
 # MODULE 9: TECHNICAL ANALYSIS
@@ -459,24 +473,15 @@ def calculate_rsi(prices, period=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def calculate_macd(prices):
-    """Calculate MACD indicator"""
-    ema12 = prices.ewm(span=12, adjust=False).mean()
-    ema26 = prices.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    return macd, signal
-
 def plot_technical(price_data, ticker):
     """Plot technical indicators"""
     if price_data.empty:
         return None
     
     rsi = calculate_rsi(price_data)
-    macd, signal = calculate_macd(price_data)
     
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
-                        row_heights=[0.6, 0.4], subplot_titles=(f'{ticker} Price', 'RSI'))
+                        row_heights=[0.6, 0.4], subplot_titles=(f'{ticker} Price', 'RSI (14)'))
     
     fig.add_trace(go.Scatter(x=price_data.index, y=price_data.values, name='Price',
                              line=dict(color='#2c5f8a', width=2)), row=1, col=1)
@@ -522,7 +527,7 @@ if not st.session_state.api_key_validated:
 
 # Sidebar
 with st.sidebar:
-    st.header("Configuration")
+    st.header("⚙️ Configuration")
     
     end_date = datetime.now()
     start_date = end_date - timedelta(days=365*2)
@@ -531,19 +536,30 @@ with st.sidebar:
     end = st.date_input("End Date", end_date, max_value=end_date)
     
     st.markdown("---")
-    st.header("Modules")
+    st.header("📊 Modules")
     
-    m1 = st.checkbox("1. Yield Curve", value=True)
+    m1 = st.checkbox("1. Yield Curve Analysis", value=True)
     m2 = st.checkbox("2. Spread Analysis", value=True)
-    m3 = st.checkbox("3. Trading Strategy", value=True)
-    m4 = st.checkbox("4. Backtest", value=True)
-    m5 = st.checkbox("5. Nelson-Siegel", value=True)
-    m6 = st.checkbox("6. Monte Carlo", value=True)
-    m7 = st.checkbox("7. ML Forecast", value=True)
-    m8 = st.checkbox("8. Volatility", value=True)
-    m9 = st.checkbox("9. Technical", value=True)
+    m3 = st.checkbox("3. Trading Strategy (Step 5)", value=True)
+    m4 = st.checkbox("4. Strategy Backtest (Step 6)", value=True)
+    m5 = st.checkbox("5. Nelson-Siegel Model", value=True)
+    m6 = st.checkbox("6. Monte Carlo Simulation", value=True)
+    m7 = st.checkbox("7. Machine Learning Forecast", value=True)
+    m8 = st.checkbox("8. Volatility Analysis", value=True)
+    m9 = st.checkbox("9. Technical Analysis", value=True)
     
-    run = st.button("Run Analysis", type="primary", use_container_width=True)
+    st.markdown("---")
+    
+    if m4:
+        st.subheader("Backtest Settings")
+        selected_etf = st.selectbox("Select ETF", BOND_ETFS, index=0)
+    
+    if m6:
+        st.subheader("Monte Carlo Settings")
+        mc_sims = st.slider("Simulations", 500, 5000, 1000, 500)
+        mc_days = st.slider("Horizon (days)", 50, 500, 252, 50)
+    
+    run = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
 
 # Main
 if run:
@@ -561,33 +577,38 @@ if run:
         
         # Fetch market data
         vix_data = fetch_yahoo_data('^VIX', start, end)
-        tlt_data = fetch_yahoo_data('TLT', start, end)
+        etf_data = fetch_yahoo_data(selected_etf if m4 else 'TLT', start, end)
         
         # Calculate spreads
         spreads = calculate_spreads(df)
         recession_prob = get_recession_probability(spreads)
         
-        # Current metrics
-        current_10y = df['10Y'].iloc[-1] if '10Y' in df else 0
+        # Current metrics with safe handling
+        current_10y = df['10Y'].iloc[-1] if '10Y' in df and not df['10Y'].empty else 0.0
+        current_10y = float(current_10y) if not pd.isna(current_10y) else 0.0
+        
+        spread_val = spreads['2s10s'].iloc[-1] if '2s10s' in spreads and not spreads['2s10s'].empty else 0.0
+        spread_val = float(spread_val) if not pd.isna(spread_val) else 0.0
+        
+        vix_val = vix_data.iloc[-1] if not vix_data.empty else 0.0
+        vix_val = float(vix_val) if not pd.isna(vix_val) else 0.0
         
         # Display KPIs
-        st.subheader("Market Overview")
+        st.subheader("📊 Market Overview")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("10Y Yield", f"{current_10y:.2f}%")
         with col2:
-            spread_val = spreads['2s10s'].iloc[-1] if '2s10s' in spreads else 0
             st.metric("2s10s Spread", f"{spread_val:.2f}%")
         with col3:
             st.metric("Recession Probability", f"{recession_prob:.1%}")
         with col4:
-            vix_val = vix_data.iloc[-1] if not vix_data.empty else 0
             st.metric("VIX", f"{vix_val:.2f}")
         
         if spread_val < 0:
-            st.warning("⚠️ Yield curve is INVERTED! Recession signal.")
+            st.warning("⚠️ YIELD CURVE IS INVERTED! Historically signals recession within 6-18 months.")
         
-        st.success(f"Data loaded: {len(df)} trading days")
+        st.success(f"✅ Data loaded: {len(df)} trading days | {start} to {end}")
         
         # Module 1: Yield Curve
         if m1:
@@ -595,6 +616,16 @@ if run:
                 fig = plot_yield_curve(df, end)
                 if fig:
                     st.plotly_chart(fig, use_container_width=True)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Curve Steepness (10Y-2Y)", f"{df['10Y'].iloc[-1] - df['2Y'].iloc[-1]:.2f}%" if '2Y' in df else "N/A")
+                    st.metric("Short End (3M)", f"{df['3M'].iloc[-1]:.2f}%" if '3M' in df else "N/A")
+                with col2:
+                    st.metric("Long End (30Y)", f"{df['30Y'].iloc[-1]:.2f}%" if '30Y' in df else "N/A")
+                    if len(df) > 1:
+                        daily_change = df['10Y'].iloc[-1] - df['10Y'].iloc[-2]
+                        st.metric("10Y Daily Change", f"{daily_change:+.2f}%")
         
         # Module 2: Spread Analysis
         if m2 and not spreads.empty:
@@ -605,154 +636,202 @@ if run:
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("Current 2s10s", f"{spreads['2s10s'].iloc[-1]:.2f}%" if '2s10s' in spreads else "N/A")
-                    st.metric("Current 3m10y", f"{spreads['3m10y'].iloc[-1]:.2f}%" if '3m10y' in spreads else "N/A")
+                    if '2s10s' in spreads:
+                        st.metric("Current 2s10s", f"{spreads['2s10s'].iloc[-1]:.2f}%")
+                    if '3m10y' in spreads:
+                        st.metric("Current 3m10y", f"{spreads['3m10y'].iloc[-1]:.2f}%")
                 with col2:
-                    st.metric("Current 5s30s", f"{spreads['5s30s'].iloc[-1]:.2f}%" if '5s30s' in spreads else "N/A")
+                    if '5s30s' in spreads:
+                        st.metric("Current 5s30s", f"{spreads['5s30s'].iloc[-1]:.2f}%")
                     st.metric("Recession Probability", f"{recession_prob:.1%}")
         
-        # Module 3: Trading Strategy
+        # Module 3: Trading Strategy (Step 5)
         if m3:
             with st.expander("🎯 Module 3: Trading Strategy (Step 5)", expanded=True):
+                st.markdown("**Strategy Logic:**")
+                st.markdown("- **BUY (Signal = 1)**: When 10Y-3M Spread < 0 (Inverted Curve)")
+                st.markdown("- **SELL (Signal = -1)**: When 10Y-3M Spread > 0 (Normal Curve)")
+                
                 strategy = create_trading_strategy(df)
                 if strategy is not None:
-                    st.dataframe(strategy.tail(10), use_container_width=True)
+                    st.markdown("**Recent Signals (Last 10 Days)**")
+                    display_df = strategy.tail(10).copy()
+                    display_df['Spread'] = display_df['Spread'].apply(lambda x: f"{x:.2f}%")
+                    st.dataframe(display_df, use_container_width=True)
+                    
                     fig = plot_trading_signals(strategy)
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
         
-        # Module 4: Backtest
-        if m4 and not tlt_data.empty:
+        # Module 4: Strategy Backtest (Step 6)
+        if m4 and not etf_data.empty:
             with st.expander("💰 Module 4: Strategy Backtest (Step 6)", expanded=True):
-                backtest_results = backtest_strategy(df, tlt_data)
+                st.markdown(f"**Backtest Results - {selected_etf} ETF**")
+                
+                backtest_results = backtest_strategy(df, etf_data)
                 if backtest_results:
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         st.metric("Strategy Return", f"{backtest_results['total_return_strategy']:.2%}")
+                        st.metric("Sharpe Ratio", f"{backtest_results['sharpe_ratio']:.2f}")
                     with col2:
                         st.metric("Benchmark Return", f"{backtest_results['total_return_benchmark']:.2%}")
-                    with col3:
-                        st.metric("Sharpe Ratio", f"{backtest_results['sharpe_ratio']:.2f}")
-                    with col4:
                         st.metric("Max Drawdown", f"{backtest_results['max_drawdown']:.2%}")
+                    with col3:
+                        st.metric("Excess Return", f"{backtest_results['total_return_strategy'] - backtest_results['total_return_benchmark']:.2%}")
+                        st.metric("Win Rate", f"{backtest_results['win_rate']:.2%}")
                     
                     fig = plot_backtest_results(backtest_results)
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Backtest failed. Try different date range.")
         
-        # Module 5: Nelson-Siegel
+        # Module 5: Nelson-Siegel Model
         if m5:
             with st.expander("📐 Module 5: Nelson-Siegel Model", expanded=True):
                 maturities = np.array([0.25, 2, 5, 10, 30])
-                yields = np.array([df[m].iloc[-1] for m in ['3M', '2Y', '5Y', '10Y', '30Y']])
-                ns_result = fit_nelson_siegel(maturities, yields)
+                yields_list = []
+                for m in ['3M', '2Y', '5Y', '10Y', '30Y']:
+                    if m in df:
+                        yields_list.append(df[m].iloc[-1])
+                    else:
+                        yields_list.append(0.0)
+                yields_arr = np.array(yields_list)
+                
+                ns_result = fit_nelson_siegel(maturities, yields_arr)
                 
                 if ns_result:
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.metric("RMSE", f"{ns_result['rmse']*100:.2f} bps")
-                        st.metric("R²", f"{ns_result['r2']:.4f}")
+                        st.metric("Model RMSE", f"{ns_result['rmse']*100:.2f} bps")
+                        st.metric("Model R²", f"{ns_result['r2']:.4f}")
                     with col2:
                         params_df = pd.DataFrame({
-                            'Parameter': ['β₀', 'β₁', 'β₂', 'λ'],
+                            'Parameter': ['β₀ (Level)', 'β₁ (Slope)', 'β₂ (Curvature)', 'λ (Decay)'],
                             'Value': [f"{ns_result['params'][0]:.4f}", f"{ns_result['params'][1]:.4f}",
                                      f"{ns_result['params'][2]:.4f}", f"{ns_result['params'][3]:.4f}"]
                         })
-                        st.dataframe(params_df, hide_index=True)
+                        st.dataframe(params_df, hide_index=True, use_container_width=True)
                     
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=maturities, y=yields, mode='markers', name='Actual',
+                    fig.add_trace(go.Scatter(x=maturities, y=yields_arr, mode='markers', name='Actual Data',
                                             marker=dict(size=12, color='#2c5f8a')))
                     fig.add_trace(go.Scatter(x=np.linspace(0.25, 30, 100), y=ns_result['fitted'],
                                             mode='lines', name='NS Fit', line=dict(color='#c17f3a', width=2)))
                     fig.update_layout(title='Nelson-Siegel Model Fit', xaxis_title='Maturity (Years)',
                                      yaxis_title='Yield (%)', template='plotly_white', height=400)
                     st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Could not fit Nelson-Siegel model")
         
-        # Module 6: Monte Carlo
+        # Module 6: Monte Carlo Simulation
         if m6:
             with st.expander("🎲 Module 6: Monte Carlo Simulation", expanded=True):
-                if st.button("Run Simulation"):
-                    returns = df['10Y'].pct_change().dropna()
-                    mu = returns.mean() * 252
-                    sigma = returns.std() * np.sqrt(252)
-                    
-                    mc_results = run_monte_carlo(current_10y, mu, sigma, 252, 1000)
-                    fig = plot_monte_carlo(mc_results, current_10y, 252)
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # VaR calculation
-                    terminal = mc_results['paths'][:, -1]
-                    var_95 = np.percentile(terminal, 5)
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("Expected Value", f"{mc_results['mean'][-1]:.2f}%")
-                    with col2:
-                        st.metric("95% VaR", f"{var_95:.2f}%")
+                if st.button("Run Monte Carlo Simulation", use_container_width=True):
+                    with st.spinner(f"Running {mc_sims} simulations..."):
+                        returns = df['10Y'].pct_change().dropna()
+                        mu = float(returns.mean() * 252) if len(returns) > 0 else 0.0
+                        sigma = float(returns.std() * np.sqrt(252)) if len(returns) > 0 else 0.1
+                        
+                        mc_results = run_monte_carlo(current_10y, mu, sigma, mc_days, mc_sims)
+                        fig = plot_monte_carlo(mc_results, current_10y, mc_days)
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        terminal = mc_results['paths'][:, -1]
+                        var_95 = float(np.percentile(terminal, 5))
+                        expected = float(mc_results['mean'][-1])
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Initial Yield", f"{current_10y:.2f}%")
+                            st.metric("Expected Terminal", f"{expected:.2f}%")
+                        with col2:
+                            st.metric("Drift (μ)", f"{mu:.4f}")
+                            st.metric("Volatility (σ)", f"{sigma:.4f}")
+                        with col3:
+                            st.metric("95% VaR", f"{var_95:.2f}%")
+                            st.metric("Simulations", f"{mc_sims:,}")
         
-        # Module 7: ML Forecast
+        # Module 7: Machine Learning Forecast
         if m7:
             with st.expander("🤖 Module 7: Machine Learning Forecast", expanded=True):
-                if st.button("Train Model"):
-                    X, y, _ = prepare_ml_data(df, 5)
-                    if X is not None:
-                        ml_result = train_ml_model(X, y, "Random Forest")
-                        if ml_result:
-                            st.metric("RMSE", f"{ml_result['rmse']*100:.2f} bps")
-                            st.metric("R²", f"{ml_result['r2']:.3f}")
-                            st.success(f"Model trained on {len(X)} samples")
-                    else:
-                        st.warning("Insufficient data for ML training")
+                if st.button("Train ML Model", use_container_width=True):
+                    with st.spinner("Training model..."):
+                        X, y, _ = prepare_ml_data(df, 5)
+                        if X is not None and len(X) > 50:
+                            ml_result = train_ml_model(X, y, "Random Forest")
+                            if ml_result:
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.metric("RMSE", f"{ml_result['rmse']*100:.2f} bps")
+                                with col2:
+                                    st.metric("R²", f"{ml_result['r2']:.3f}")
+                                st.success(f"Model trained on {len(X)} samples")
+                            else:
+                                st.warning("Model training failed")
+                        else:
+                            st.warning(f"Insufficient data. Need >50 samples, have {len(X) if X is not None else 0}")
         
-        # Module 8: Volatility
+        # Module 8: Volatility Analysis
         if m8 and not vix_data.empty:
             with st.expander("⚡ Module 8: Volatility Analysis", expanded=True):
                 vol_analysis = analyze_volatility(vix_data)
                 st.metric("Current VIX", f"{vol_analysis['current_vix']:.2f}")
-                st.info(f"Regime: {vol_analysis['regime']}")
+                st.info(f"📊 Regime: {vol_analysis['regime']}")
                 
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=vix_data.index, y=vix_data.values, fill='tozeroy',
-                                        line=dict(color='#c17f3a', width=2)))
-                fig.add_hline(y=20, line_dash='dash', line_color='red')
-                fig.update_layout(title='VIX Historical Chart', xaxis_title='Date',
-                                 yaxis_title='VIX', template='plotly_white', height=400)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # Module 9: Technical
-        if m9 and not tlt_data.empty:
-            with st.expander("🛠 Module 9: Technical Analysis", expanded=True):
-                fig = plot_technical(tlt_data, 'TLT')
+                fig = plot_vix(vix_data)
                 if fig:
                     st.plotly_chart(fig, use_container_width=True)
+        
+        # Module 9: Technical Analysis
+        if m9 and not etf_data.empty:
+            with st.expander("🛠 Module 9: Technical Analysis", expanded=True):
+                tech_ticker = st.selectbox("Select Asset", ['TLT', 'IEF', 'SHY', 'SPY', 'QQQ'], key="tech_ticker")
+                tech_data = fetch_yahoo_data(tech_ticker, start, end)
                 
-                # Current signals
-                rsi = calculate_rsi(tlt_data).iloc[-1] if len(tlt_data) > 14 else 50
-                rsi_signal = "Oversold" if rsi < 30 else "Overbought" if rsi > 70 else "Neutral"
-                st.metric("RSI", f"{rsi:.1f}", delta=rsi_signal)
+                if not tech_data.empty:
+                    fig = plot_technical(tech_data, tech_ticker)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    rsi_val = calculate_rsi(tech_data).iloc[-1] if len(tech_data) > 14 else 50.0
+                    rsi_val = float(rsi_val) if not pd.isna(rsi_val) else 50.0
+                    rsi_signal = "Oversold" if rsi_val < 30 else "Overbought" if rsi_val > 70 else "Neutral"
+                    st.metric("Current RSI", f"{rsi_val:.1f}", delta=rsi_signal)
+                else:
+                    st.warning(f"Could not fetch {tech_ticker} data")
 
 else:
     st.info("👈 Configure parameters and click 'Run Analysis'")
     
     with st.expander("📖 9 Professional Modules", expanded=True):
         st.markdown("""
-        ### Available Modules:
+        ### 🚀 Complete Fixed-Income Analytics Platform
         
-        1. **Yield Curve Analysis** - Interactive curve visualization
-        2. **Spread Analysis** - 2s10s, 3m10y, 5s30s spreads
-        3. **Trading Strategy (Step 5)** - Buy/Sell based on 10Y-3M spread
-        4. **Backtest (Step 6)** - Strategy performance with TLT ETF
-        5. **Nelson-Siegel Model** - Parametric curve fitting
-        6. **Monte Carlo Simulation** - Stochastic yield paths, VaR
-        7. **ML Forecast** - Random Forest yield prediction
-        8. **Volatility Analysis** - VIX regime detection
-        9. **Technical Analysis** - RSI indicators
+        | # | Module | Description |
+        |---|--------|-------------|
+        | 1 | **Yield Curve Analysis** | Interactive U.S. Treasury yield curve visualization |
+        | 2 | **Spread Analysis** | 2s10s, 3m10y, 5s30s spreads and forward rates |
+        | 3 | **Trading Strategy (Step 5)** | Buy/Sell signals based on 10Y-3M spread |
+        | 4 | **Strategy Backtest (Step 6)** | Backtest with TLT/IEF/SHY/BND ETFs |
+        | 5 | **Nelson-Siegel Model** | Parametric yield curve modeling |
+        | 6 | **Monte Carlo Simulation** | GBM simulation, VaR, confidence intervals |
+        | 7 | **Machine Learning Forecast** | Random Forest yield prediction |
+        | 8 | **Volatility Analysis** | VIX analysis and regime detection |
+        | 9 | **Technical Analysis** | RSI indicators for ETFs |
         
-        ### Get FRED API Key:
-        1. Visit [FRED API](https://fred.stlouisfed.org/docs/api/api_key.html)
-        2. Register for free
-        3. Enter key in sidebar
+        ### 🔑 Getting a FRED API Key
+        
+        1. Visit [FRED API website](https://fred.stlouisfed.org/docs/api/api_key.html)
+        2. Click "Request API Key"
+        3. Register for a free account
+        4. Your API key will be emailed instantly
+        5. Enter it in the sidebar to start
+        
+        ### ⚠️ Risk Warning
+        Past performance does not guarantee future results. This platform is for educational purposes only.
         """)
 
 st.markdown("---")
-st.markdown(f"*Data: FRED | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+st.markdown(f"*Data source: FRED (Federal Reserve Economic Data) | Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
