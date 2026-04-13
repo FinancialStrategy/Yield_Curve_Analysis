@@ -205,32 +205,54 @@ def chart_rate_dynamics(yield_df: pd.DataFrame, spreads: pd.DataFrame) -> Option
 
 
 def chart_monte_carlo(results: dict, initial: float, days: int, title: str = "Monte Carlo Simulation") -> go.Figure:
-    """Plot Monte Carlo simulation results with confidence bands"""
+    """Plot Monte Carlo simulation results with fan chart and median path."""
     fig = go.Figure()
-    x_axis = np.arange(days)
-    
+    x_axis = np.arange(days + 1)
+
     fig.add_trace(go.Scatter(
-        x=x_axis, y=results["upper"], fill=None, mode='lines',
-        line=dict(color='rgba(0,0,0,0)'), showlegend=False
+        x=x_axis, y=results["p95"], fill=None, mode="lines",
+        line=dict(color="rgba(0,0,0,0)"), showlegend=False, hoverinfo="skip"
     ))
-    
     fig.add_trace(go.Scatter(
-        x=x_axis, y=results["lower"], fill='tonexty', mode='lines',
-        fillcolor='rgba(44, 95, 138, 0.20)', line=dict(color='rgba(0,0,0,0)'),
-        name='95% Confidence Interval'
+        x=x_axis, y=results["p05"], fill="tonexty", mode="lines",
+        fillcolor="rgba(44, 95, 138, 0.10)", line=dict(color="rgba(0,0,0,0)"),
+        name="5-95% Band", hoverinfo="skip"
     ))
-    
+
     fig.add_trace(go.Scatter(
-        x=x_axis, y=results["mean"], mode='lines', name='Mean Path',
-        line=dict(color=COLORS["accent"], width=2.5)
+        x=x_axis, y=results["p75"], fill=None, mode="lines",
+        line=dict(color="rgba(0,0,0,0)"), showlegend=False, hoverinfo="skip"
     ))
-    
     fig.add_trace(go.Scatter(
-        x=[0], y=[initial], mode='markers', name='Current',
-        marker=dict(size=12, color=COLORS["positive"], symbol='star')
+        x=x_axis, y=results["p25"], fill="tonexty", mode="lines",
+        fillcolor="rgba(44, 95, 138, 0.22)", line=dict(color="rgba(0,0,0,0)"),
+        name="25-75% Band", hoverinfo="skip"
     ))
-    
-    return chart_layout(fig, title, "Yield (%)", 500, "Trading Days")
+
+    fig.add_trace(go.Scatter(
+        x=x_axis, y=results["mean"], mode="lines", name="Mean Path",
+        line=dict(color=COLORS["accent"], width=2.6)
+    ))
+    fig.add_trace(go.Scatter(
+        x=x_axis, y=results["median"], mode="lines", name="Median Path",
+        line=dict(color=COLORS["warning"], width=2.0, dash="dash")
+    ))
+    fig.add_trace(go.Scatter(
+        x=[0], y=[initial], mode="markers", name="Current",
+        marker=dict(size=12, color=COLORS["positive"], symbol="star")
+    ))
+
+    return chart_layout(fig, title, "Yield (%)", 540, "Trading Days")
+
+
+def chart_monte_carlo_distribution(paths: np.ndarray, initial: float, title: str = "Terminal Yield Distribution") -> go.Figure:
+    """Plot terminal distribution histogram with current level marker."""
+    terminal = np.asarray(paths[:, -1], dtype=float)
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(x=terminal, nbinsx=40, name="Terminal Yield", marker_color=COLORS["accent"], opacity=0.85))
+    fig.add_vline(x=float(initial), line_dash="dash", line_color=COLORS["negative"], line_width=2)
+    fig.update_layout(bargap=0.05)
+    return chart_layout(fig, title, "Count", 430, "Yield (%)")
 
 
 def chart_backtest(results: dict) -> go.Figure:

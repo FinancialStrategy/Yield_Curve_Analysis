@@ -1,6 +1,6 @@
 """
 Yield Curve Institutional Platform - Main Application Entry Point
-Version 37.2 - Fully Functional with All Fixes
+Version 37.1 - Fully Functional with Visible Technical Charts
 
 This is the main Streamlit application that orchestrates all modules.
 Run with: streamlit run app.py
@@ -28,7 +28,7 @@ from technical import add_technical_indicators, get_technical_signals, plot_tech
 from visuals import (
     chart_yield_curve, chart_yield_history, chart_spreads, chart_model_residuals,
     chart_dynamic_params, chart_factors, chart_pca, chart_rate_dynamics,
-    chart_monte_carlo, chart_backtest, chart_scenario, chart_correlation,
+    chart_monte_carlo, chart_monte_carlo_distribution, chart_backtest, chart_scenario, chart_correlation,
     chart_technical, chart_ohlc, chart_volatility, chart_forecast
 )
 from ui import render_css, render_header, render_api_gate, create_smart_kpi_row, render_footer, safe_float
@@ -47,43 +47,39 @@ def safe_series_value(series: pd.Series, default: float = 0.0) -> float:
         return default
 
 
-def safe_float_from_series(value, default: float = 0.0) -> float:
-    """Safely convert a value to float, handling pandas Series and NaN values"""
-    if value is None:
-        return default
-    if isinstance(value, pd.Series):
-        if value.empty:
-            return default
-        try:
-            val = value.iloc[-1]
-            if pd.isna(val):
-                return default
-            return float(val)
-        except Exception:
-            return default
-    if isinstance(value, (int, float)):
-        if np.isnan(value):
-            return default
-        return float(value)
-    return default
-
-
 def safe_correlation(series1: pd.Series, series2: pd.Series) -> Optional[float]:
-    """Safely calculate correlation between two pandas Series"""
+    """
+    Safely calculate correlation between two pandas Series
+    
+    Parameters
+    ----------
+    series1 : pd.Series
+        First time series
+    series2 : pd.Series
+        Second time series
+    
+    Returns
+    -------
+    float or None
+        Correlation value or None if calculation fails
+    """
     if series1 is None or series2 is None:
         return None
     if series1.empty or series2.empty:
         return None
     
     try:
+        # Create a DataFrame with both series and drop NaN values
         df = pd.DataFrame({
             'series1': series1,
             'series2': series2
         }).dropna()
         
+        # Need at least 3 observations for meaningful correlation
         if df.empty or len(df) < 3:
             return None
         
+        # Calculate correlation using numpy for better control
         corr_matrix = np.corrcoef(df['series1'].values, df['series2'].values)
         corr_value = corr_matrix[0, 1]
         
@@ -141,9 +137,14 @@ def main():
         
         # Monte Carlo parameters
         with st.expander("🎲 Monte Carlo Parameters", expanded=False):
-            mc_model = st.selectbox("Simulation Model", ["Geometric Brownian Motion", "Vasicek Mean-Reverting"])
-            mc_simulations = st.slider("Number of Simulations", 500, 10000, 5000, 500)
+            mc_model = st.selectbox("Simulation Model", ["Geometric Brownian Motion", "Vasicek Mean-Reverting", "Ornstein-Uhlenbeck", "Jump Diffusion"])
+            mc_simulations = st.slider("Number of Simulations", 1000, 20000, 8000, 1000)
             mc_horizon = st.slider("Forecast Horizon (days)", 5, 252, 20)
+            mc_confidence = st.slider("Monte Carlo Confidence", 0.80, 0.99, 0.95, 0.01)
+            mc_lookback = st.slider("Calibration Lookback (days)", 60, 756, 252, 21)
+            mc_shock_bps = st.slider("Parallel Shock (bps)", -150, 150, 0, 5)
+            mc_shock_day = st.slider("Shock Start Day", 0, 30, 1, 1)
+            mc_shock_persistence = st.slider("Shock Persistence", 0.50, 1.00, 1.00, 0.05)
         
         # Machine Learning parameters
         with st.expander("🤖 Machine Learning", expanded=False):
@@ -195,6 +196,11 @@ def main():
             st.session_state.mc_model = mc_model
             st.session_state.mc_simulations = mc_simulations
             st.session_state.mc_horizon = mc_horizon
+            st.session_state.mc_confidence = mc_confidence
+            st.session_state.mc_lookback = mc_lookback
+            st.session_state.mc_shock_bps = mc_shock_bps
+            st.session_state.mc_shock_day = mc_shock_day
+            st.session_state.mc_shock_persistence = mc_shock_persistence
             st.session_state.ml_model_type = ml_model_type
             st.session_state.ml_lags = ml_lags
             st.session_state.bt_strategy = bt_strategy
@@ -354,45 +360,108 @@ def main():
     # ========================================================================
     with tabs[3]:
         st.subheader(f"Monte Carlo Simulation - {st.session_state.mc_model}")
-        
-        current_10y = safe_series_value(yield_df["10Y"]) if "10Y" in yield_df.columns else 4.0
-        
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            st.info(f"**Current 10Y Yield:** {current_10y:.2f}%")
-            if "10Y" in yield_df.columns:
-                vol = yield_df["10Y"].pct_change().std() * np.sqrt(252)
-                st.info(f"**Historical Volatility:** {vol:.2%}")
-        
-        if st.button("Run Simulation", use_container_width=True):
-            with st.spinner(f"Running {st.session_state.mc_simulations:,} simulations..."):
-                initial_y = current_10y
-                returns = yield_df["10Y"].pct_change().dropna()
-                mu = returns.mean() * 252 if len(returns) > 0 else 0
-                sigma = returns.std() * np.sqrt(252) if len(returns) > 0 else 0.10
-                
-                if st.session_state.mc_model == "Geometric Brownian Motion":
-                    paths = MonteCarlo.gbm(initial_y, mu, sigma, st.session_state.mc_horizon, st.session_state.mc_simulations)
-                    model_name = "GBM"
-                else:
-                    theta = yield_df["10Y"].mean() if "10Y" in yield_df.columns else initial_y
-                    sigma_v = yield_df["10Y"].diff().dropna().std() * np.sqrt(252) if "10Y" in yield_df.columns else 0.10
-                    paths = MonteCarlo.vasicek(initial_y, 0.5, theta, sigma_v, st.session_state.mc_horizon, st.session_state.mc_simulations)
-                    model_name = "Vasicek"
-                
-                sim_results = MonteCarlo.confidence_intervals(paths, 0.95)
-                var_95 = MonteCarlo.var(paths, 0.95)
-                
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Expected Terminal", f"{sim_results['mean'][-1]:.2f}%")
-                col2.metric("95% VaR", f"{var_95:.2f}%")
-                col3.metric("Volatility", f"±{sim_results['std'][-1]:.2f}%")
-                col4.metric("Simulations", f"{st.session_state.mc_simulations:,}")
-                
-                fig = chart_monte_carlo(sim_results, initial_y, st.session_state.mc_horizon, f"{model_name} Simulation")
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-    
+
+        if "10Y" not in yield_df.columns or yield_df["10Y"].dropna().empty:
+            st.warning("10Y yield series is required for Monte Carlo simulation.")
+        else:
+            y10_series = pd.to_numeric(yield_df["10Y"], errors="coerce").dropna()
+            current_10y = safe_series_value(y10_series, 4.0)
+            mc_preview = MonteCarlo.calibrate(y10_series, lookback=st.session_state.mc_lookback)
+
+            top1, top2, top3, top4 = st.columns(4)
+            top1.metric("Current 10Y Yield", f"{current_10y:.2f}%")
+            top2.metric("Calibrated Mean", f"{mc_preview['theta']:.2f}%")
+            top3.metric("Mean Reversion κ", f"{mc_preview['kappa']:.2f}")
+            half_life = mc_preview.get("half_life_days", np.nan)
+            top4.metric("Half-Life", f"{half_life:.1f} days" if np.isfinite(half_life) else "N/A")
+
+            st.caption(
+                f"Calibration uses the last {mc_preview['lookback_obs']} observations. "
+                f"Pct-vol={mc_preview['sigma_pct']:.2%}, abs-vol={mc_preview['sigma_abs']:.2f}, "
+                f"jump intensity={mc_preview['jump_lambda']:.2f} per year."
+            )
+
+            if st.button("Run Simulation", key="run_mc", use_container_width=True):
+                with st.spinner(f"Running {st.session_state.mc_simulations:,} simulations..."):
+                    mc_results = MonteCarlo.simulate(
+                        y10_series,
+                        model=st.session_state.mc_model,
+                        days=st.session_state.mc_horizon,
+                        sims=st.session_state.mc_simulations,
+                        conf=st.session_state.mc_confidence,
+                        lookback=st.session_state.mc_lookback,
+                        shock_bps=st.session_state.mc_shock_bps,
+                        shock_day=st.session_state.mc_shock_day,
+                        shock_persistence=st.session_state.mc_shock_persistence,
+                        seed=42,
+                    )
+
+                    sim_results = mc_results
+                    terminal = sim_results["terminal"]
+                    diag = sim_results["diagnostics"]
+                    params = sim_results["params"]
+
+                    row1 = st.columns(5)
+                    row1[0].metric("Expected Terminal", f"{terminal['terminal_mean']:.2f}%")
+                    row1[1].metric(f"{int(st.session_state.mc_confidence * 100)}% VaR", f"{terminal['var_level']:.2f}%")
+                    row1[2].metric("CVaR / ES", f"{terminal['cvar_level']:.2f}%")
+                    row1[3].metric("Prob. Yield Up", f"{terminal['prob_up']:.1%}")
+                    row1[4].metric("Terminal Std", f"{terminal['terminal_std']:.2f}")
+
+                    row2 = st.columns(5)
+                    row2[0].metric("Prob. -50 bps", f"{terminal['prob_down_50bps']:.1%}")
+                    row2[1].metric("Prob. +50 bps", f"{terminal['prob_up_50bps']:.1%}")
+                    row2[2].metric("Terminal IQR", f"{diag['terminal_iqr']:.2f}")
+                    row2[3].metric("Worst Path DD", f"{diag['worst_path_drawdown']:.2%}")
+                    row2[4].metric("Shock Applied", f"{st.session_state.mc_shock_bps} bps")
+
+                    fig = chart_monte_carlo(sim_results, params["initial"], st.session_state.mc_horizon, f"{sim_results['model_name']} Fan Chart")
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+
+                    left, right = st.columns(2)
+                    with left:
+                        fig_dist = chart_monte_carlo_distribution(sim_results["paths"], params["initial"], "Terminal Yield Distribution")
+                        if fig_dist:
+                            st.plotly_chart(fig_dist, use_container_width=True)
+                    with right:
+                        st.markdown("### Simulation Diagnostics")
+                        diag_df = pd.DataFrame({
+                            "Metric": [
+                                "Model", "Initial Yield", "Long-Run Mean", "Annual Drift",
+                                "Annual Pct Vol", "Annual Abs Vol", "Jump Intensity",
+                                "Jump Mean", "Jump Std", "Best Terminal", "Worst Terminal"
+                            ],
+                            "Value": [
+                                sim_results["model_name"],
+                                f"{params['initial']:.4f}%",
+                                f"{params['theta']:.4f}%",
+                                f"{params['mu']:.4f}",
+                                f"{params['sigma_pct']:.4%}",
+                                f"{params['sigma_abs']:.4f}",
+                                f"{params['jump_lambda']:.4f}",
+                                f"{params['jump_mean']:.4f}",
+                                f"{params['jump_std']:.4f}",
+                                f"{diag['best_terminal']:.4f}%",
+                                f"{diag['worst_terminal']:.4f}%",
+                            ],
+                        })
+                        st.dataframe(diag_df, use_container_width=True, hide_index=True)
+
+                    terminal_df = pd.DataFrame({
+                        "Percentile": ["5%", "25%", "50%", "75%", "95%"],
+                        "Yield": [
+                            f"{sim_results['p05'][-1]:.4f}%",
+                            f"{sim_results['p25'][-1]:.4f}%",
+                            f"{sim_results['median'][-1]:.4f}%",
+                            f"{sim_results['p75'][-1]:.4f}%",
+                            f"{sim_results['p95'][-1]:.4f}%",
+                        ]
+                    })
+                    st.markdown("### Terminal Percentile Table")
+                    st.dataframe(terminal_df, use_container_width=True, hide_index=True)
+
+
     # ========================================================================
     # TAB 5: Machine Learning
     # ========================================================================
@@ -562,50 +631,22 @@ def main():
                     # Add technical indicators
                     tech_df = add_technical_indicators(tech_df)
                     
-                    # SAFELY extract current price
-                    if "Close" in tech_df.columns and not tech_df["Close"].empty:
-                        current_price_val = tech_df["Close"].iloc[-1]
-                        if pd.isna(current_price_val):
-                            current_price = 0.0
-                        else:
-                            current_price = float(current_price_val)
-                    else:
-                        current_price = 0.0
-                    
-                    # SAFELY extract SMA values
-                    if "SMA_20" in tech_df.columns and not tech_df["SMA_20"].empty:
-                        sma20_val = tech_df["SMA_20"].iloc[-1]
-                        sma20 = float(sma20_val) if not pd.isna(sma20_val) else 0.0
-                    else:
-                        sma20 = 0.0
-                    
-                    if "SMA_50" in tech_df.columns and not tech_df["SMA_50"].empty:
-                        sma50_val = tech_df["SMA_50"].iloc[-1]
-                        sma50 = float(sma50_val) if not pd.isna(sma50_val) else 0.0
-                    else:
-                        sma50 = 0.0
-                    
-                    # SAFELY calculate 1D change
-                    if len(tech_df) > 1 and "Close" in tech_df.columns:
-                        close_vals = tech_df["Close"].dropna()
-                        if len(close_vals) >= 2:
-                            change_1d = (close_vals.iloc[-1] - close_vals.iloc[-2]) / close_vals.iloc[-2] * 100
-                            change_1d = float(change_1d) if not pd.isna(change_1d) else 0.0
-                        else:
-                            change_1d = 0.0
-                    else:
-                        change_1d = 0.0
-                    
                     # Display current price info
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Current Price", f"${current_price:.2f}" if current_price > 0 else "N/A")
+                        current_price = tech_df["Close"].iloc[-1]
+                        st.metric("Current Price", f"${current_price:.2f}")
                     with col2:
+                        change_1d = tech_df["Close"].pct_change().iloc[-1] * 100
                         st.metric("1D Change", f"{change_1d:+.2f}%", delta=f"{change_1d:+.2f}%")
                     with col3:
-                        st.metric("SMA 20", f"${sma20:.2f}" if sma20 > 0 else "N/A")
+                        if "SMA_20" in tech_df.columns:
+                            sma20 = tech_df["SMA_20"].iloc[-1]
+                            st.metric("SMA 20", f"${sma20:.2f}")
                     with col4:
-                        st.metric("SMA 50", f"${sma50:.2f}" if sma50 > 0 else "N/A")
+                        if "SMA_50" in tech_df.columns:
+                            sma50 = tech_df["SMA_50"].iloc[-1]
+                            st.metric("SMA 50", f"${sma50:.2f}")
                     
                     # Generate technical signals
                     signals = get_technical_signals(tech_df)

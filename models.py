@@ -308,146 +308,299 @@ def rolling_ns_parameters(yield_df: pd.DataFrame, maturities: np.ndarray, select
 
 class MonteCarlo:
     """
-    Monte Carlo simulation for yield path forecasting
-    
-    Supports Geometric Brownian Motion (GBM) and Vasicek mean-reverting models
+    Advanced Monte Carlo simulation engine for yield path forecasting.
+
+    Supported models
+    ----------------
+    - Geometric Brownian Motion
+    - Vasicek Mean-Reverting
+    - Ornstein-Uhlenbeck
+    - Jump Diffusion
+
+    The engine also provides historical calibration, scenario shocks,
+    distribution diagnostics, fan-chart statistics, and terminal risk metrics.
     """
-    
+
     @staticmethod
-    def gbm(initial: float, mu: float, sigma: float, days: int, sims: int = 1000) -> np.ndarray:
-        """
-        Geometric Brownian Motion simulation
-        
-        Parameters
-        ----------
-        initial : float
-            Initial yield value
-        mu : float
-            Drift coefficient (annualized)
-        sigma : float
-            Volatility coefficient (annualized)
-        days : int
-            Simulation horizon in trading days
-        sims : int
-            Number of simulation paths
-        
-        Returns
-        -------
-        np.ndarray
-            Simulation paths (sims x days)
-        """
-        dt = 1 / 252
-        paths = np.zeros((sims, days))
-        paths[:, 0] = initial
-        
-        for i in range(1, days):
-            z = np.random.standard_normal(sims)
-            paths[:, i] = paths[:, i-1] * np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * z)
-        
-        return paths
-    
+    def _sanitize_series(series: pd.Series, min_obs: int = 60) -> pd.Series:
+        if series is None:
+            return pd.Series(dtype=float)
+        s = pd.to_numeric(series, errors="coerce").dropna()
+        return s if len(s) >= min_obs else pd.Series(dtype=float)
+
     @staticmethod
-    def vasicek(initial: float, kappa: float, theta: float, sigma: float, days: int, sims: int = 1000) -> np.ndarray:
-        """
-        Vasicek mean-reverting model simulation
-        
-        Parameters
-        ----------
-        initial : float
-            Initial yield value
-        kappa : float
-            Mean-reversion speed
-        theta : float
-            Long-term mean level
-        sigma : float
-            Volatility coefficient
-        days : int
-            Simulation horizon in trading days
-        sims : int
-            Number of simulation paths
-        
-        Returns
-        -------
-        np.ndarray
-            Simulation paths (sims x days)
-        """
+    def _fallback_params(series: pd.Series) -> Dict:
+        s = MonteCarlo._sanitize_series(series, min_obs=3)
+        if s.empty:
+            return {
+                "initial": 4.0,
+                "mu": 0.0,
+                "sigma_pct": 0.10,
+                "sigma_abs": 0.50,
+                "theta": 4.0,
+                "kappa": 0.75,
+                "jump_lambda": 0.10,
+                "jump_mean": 0.0,
+                "jump_std": 0.20,
+                "last_diff": 0.0,
+                "hist_mean_terminal_change": 0.0,
+                "half_life_days": np.nan,
+                "lookback_obs": 0,
+            }
+
+        initial = float(s.iloc[-1])
+        diffs = s.diff().dropna()
+        pct = s.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+
+        mu = float(pct.mean() * 252) if not pct.empty else 0.0
+        sigma_pct = float(pct.std() * np.sqrt(252)) if not pct.empty else 0.10
+        sigma_abs = float(diffs.std() * np.sqrt(252)) if not diffs.empty else max(abs(initial) * 0.05, 0.10)
+        theta = float(s.mean())
+
+        return {
+            "initial": initial,
+            "mu": mu,
+            "sigma_pct": max(sigma_pct, 1e-6),
+            "sigma_abs": max(sigma_abs, 1e-6),
+            "theta": theta,
+            "kappa": 0.75,
+            "jump_lambda": 0.10,
+            "jump_mean": 0.0,
+            "jump_std": max(sigma_abs * 0.35, 0.05),
+            "last_diff": float(diffs.iloc[-1]) if not diffs.empty else 0.0,
+            "hist_mean_terminal_change": 0.0,
+            "half_life_days": np.nan,
+            "lookback_obs": int(len(s)),
+        }
+
+    @staticmethod
+    def calibrate(yield_series: pd.Series, lookback: int = 252) -> Dict:
+        """Calibrate process parameters from historical yield data."""
+        s = MonteCarlo._sanitize_series(yield_series, min_obs=20)
+        if s.empty:
+            return MonteCarlo._fallback_params(yield_series)
+
+        if lookback and len(s) > lookback:
+            s = s.iloc[-lookback:]
+
+        initial = float(s.iloc[-1])
+        diffs = s.diff().dropna()
+        pct = s.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+
+        mu = float(pct.mean() * 252) if not pct.empty else 0.0
+        sigma_pct = float(pct.std() * np.sqrt(252)) if not pct.empty else 0.10
+        sigma_abs = float(diffs.std() * np.sqrt(252)) if not diffs.empty else max(abs(initial) * 0.05, 0.10)
+        theta = float(s.mean())
+
+        # AR(1) calibration for mean reversion on levels
+        lag = s.shift(1).dropna()
+        curr = s.loc[lag.index]
+        kappa = 0.75
+        half_life_days = np.nan
+        try:
+            x = lag.values.astype(float)
+            y = curr.values.astype(float)
+            beta, alpha = np.polyfit(x, y, 1)
+            beta = float(np.clip(beta, 1e-6, 0.9999))
+            kappa = float(-np.log(beta) * 252)
+            half_life_days = float(np.log(2) / kappa * 252) if kappa > 0 else np.nan
+            theta = float(alpha / (1 - beta)) if abs(1 - beta) > 1e-8 else theta
+        except Exception:
+            pass
+
+        centered = diffs - diffs.mean() if not diffs.empty else pd.Series(dtype=float)
+        jump_threshold = 2.5 * centered.std() if not centered.empty and centered.std() > 0 else np.nan
+        jumps = centered[centered.abs() > jump_threshold] if np.isfinite(jump_threshold) else pd.Series(dtype=float)
+        jump_lambda = float(len(jumps) / max(len(diffs), 1) * 252) if not diffs.empty else 0.10
+        jump_mean = float(jumps.mean()) if not jumps.empty else 0.0
+        jump_std = float(jumps.std()) if len(jumps) > 1 else max(sigma_abs / np.sqrt(252), 0.05)
+
+        hist_mean_terminal_change = 0.0
+        horizon = min(20, max(len(s) // 10, 5))
+        if len(s) > horizon:
+            hist_mean_terminal_change = float((s.shift(-horizon) - s).dropna().mean())
+
+        return {
+            "initial": initial,
+            "mu": mu,
+            "sigma_pct": max(sigma_pct, 1e-6),
+            "sigma_abs": max(sigma_abs, 1e-6),
+            "theta": theta,
+            "kappa": max(kappa, 1e-6),
+            "jump_lambda": max(jump_lambda, 1e-6),
+            "jump_mean": jump_mean,
+            "jump_std": max(jump_std, 1e-6),
+            "last_diff": float(diffs.iloc[-1]) if not diffs.empty else 0.0,
+            "hist_mean_terminal_change": hist_mean_terminal_change,
+            "half_life_days": half_life_days,
+            "lookback_obs": int(len(s)),
+        }
+
+    @staticmethod
+    def gbm(initial: float, mu: float, sigma: float, days: int, sims: int = 1000, seed: Optional[int] = None) -> np.ndarray:
         dt = 1 / 252
-        paths = np.zeros((sims, days))
+        rng = np.random.default_rng(seed)
+        paths = np.zeros((sims, days + 1), dtype=float)
         paths[:, 0] = initial
-        
-        for i in range(1, days):
-            z = np.random.standard_normal(sims)
-            dr = kappa * (theta - paths[:, i-1]) * dt + sigma * np.sqrt(dt) * z
-            paths[:, i] = paths[:, i-1] + dr
-        
+        for i in range(1, days + 1):
+            z = rng.standard_normal(sims)
+            paths[:, i] = paths[:, i - 1] * np.exp((mu - 0.5 * sigma ** 2) * dt + sigma * np.sqrt(dt) * z)
         return paths
-    
+
+    @staticmethod
+    def vasicek(initial: float, kappa: float, theta: float, sigma: float, days: int, sims: int = 1000, seed: Optional[int] = None, floor: Optional[float] = None) -> np.ndarray:
+        dt = 1 / 252
+        rng = np.random.default_rng(seed)
+        paths = np.zeros((sims, days + 1), dtype=float)
+        paths[:, 0] = initial
+        for i in range(1, days + 1):
+            z = rng.standard_normal(sims)
+            dr = kappa * (theta - paths[:, i - 1]) * dt + sigma * np.sqrt(dt) * z
+            paths[:, i] = paths[:, i - 1] + dr
+            if floor is not None:
+                paths[:, i] = np.maximum(paths[:, i], floor)
+        return paths
+
+    @staticmethod
+    def ornstein_uhlenbeck(initial: float, kappa: float, theta: float, sigma: float, days: int, sims: int = 1000, seed: Optional[int] = None) -> np.ndarray:
+        return MonteCarlo.vasicek(initial, kappa, theta, sigma, days, sims, seed=seed, floor=None)
+
+    @staticmethod
+    def jump_diffusion(initial: float, mu: float, sigma: float, jump_lambda: float, jump_mean: float, jump_std: float, days: int, sims: int = 1000, seed: Optional[int] = None) -> np.ndarray:
+        dt = 1 / 252
+        rng = np.random.default_rng(seed)
+        paths = np.zeros((sims, days + 1), dtype=float)
+        paths[:, 0] = initial
+        for i in range(1, days + 1):
+            z = rng.standard_normal(sims)
+            jump_count = rng.poisson(jump_lambda * dt, sims)
+            jump_size = np.where(
+                jump_count > 0,
+                rng.normal(jump_mean, jump_std, sims) * jump_count,
+                0.0,
+            )
+            diffusion = (mu - 0.5 * sigma ** 2) * dt + sigma * np.sqrt(dt) * z
+            paths[:, i] = np.maximum(paths[:, i - 1] * np.exp(diffusion) + jump_size, 0.0)
+        return paths
+
+    @staticmethod
+    def apply_shock(paths: np.ndarray, shock_bps: float = 0.0, shock_day: int = 1, persistence: float = 1.0) -> np.ndarray:
+        shocked = np.array(paths, copy=True)
+        if shocked.size == 0 or shock_bps == 0:
+            return shocked
+        shock = shock_bps / 100.0
+        start_idx = int(np.clip(shock_day, 0, shocked.shape[1] - 1))
+        decay = persistence ** np.arange(shocked.shape[1] - start_idx)
+        shocked[:, start_idx:] = shocked[:, start_idx:] + shock * decay
+        return shocked
+
     @staticmethod
     def confidence_intervals(paths: np.ndarray, conf: float = 0.95) -> Dict:
-        """
-        Calculate confidence intervals for simulation paths
-        
-        Parameters
-        ----------
-        paths : np.ndarray
-            Simulation paths
-        conf : float
-            Confidence level (default 0.95)
-        
-        Returns
-        -------
-        dict
-            Mean, median, lower/upper bounds, and standard deviation
-        """
         lower_p = (1 - conf) / 2 * 100
         upper_p = (1 + conf) / 2 * 100
-        
         return {
             "mean": np.mean(paths, axis=0),
             "median": np.percentile(paths, 50, axis=0),
             "lower": np.percentile(paths, lower_p, axis=0),
             "upper": np.percentile(paths, upper_p, axis=0),
+            "p05": np.percentile(paths, 5, axis=0),
+            "p25": np.percentile(paths, 25, axis=0),
+            "p75": np.percentile(paths, 75, axis=0),
+            "p95": np.percentile(paths, 95, axis=0),
             "std": np.std(paths, axis=0),
         }
-    
+
+    @staticmethod
+    def terminal_stats(paths: np.ndarray, initial: Optional[float] = None, conf: float = 0.95) -> Dict:
+        terminal = np.asarray(paths[:, -1], dtype=float)
+        if terminal.size == 0:
+            return {}
+        var_level = float(np.percentile(terminal, (1 - conf) * 100))
+        tail = terminal[terminal <= var_level]
+        cvar_level = float(np.mean(tail)) if tail.size else var_level
+        initial_level = float(initial if initial is not None else paths[:, 0].mean())
+        terminal_change = terminal - initial_level
+        prob_up = float(np.mean(terminal > initial_level))
+        prob_down_50bps = float(np.mean(terminal_change <= -0.50))
+        prob_up_50bps = float(np.mean(terminal_change >= 0.50))
+        return {
+            "initial": initial_level,
+            "terminal_mean": float(np.mean(terminal)),
+            "terminal_median": float(np.median(terminal)),
+            "terminal_std": float(np.std(terminal)),
+            "terminal_min": float(np.min(terminal)),
+            "terminal_max": float(np.max(terminal)),
+            "var_level": var_level,
+            "cvar_level": cvar_level,
+            "prob_up": prob_up,
+            "prob_down_50bps": prob_down_50bps,
+            "prob_up_50bps": prob_up_50bps,
+            "skew": float(pd.Series(terminal).skew()),
+            "kurtosis": float(pd.Series(terminal).kurt()),
+        }
+
+    @staticmethod
+    def path_diagnostics(paths: np.ndarray) -> Dict:
+        if paths.size == 0:
+            return {}
+        cross_sectional_std = np.std(paths, axis=0)
+        running_drawdown = paths / np.maximum.accumulate(paths, axis=1) - 1
+        return {
+            "max_cross_sectional_std": float(np.max(cross_sectional_std)),
+            "terminal_iqr": float(np.percentile(paths[:, -1], 75) - np.percentile(paths[:, -1], 25)),
+            "worst_path_drawdown": float(np.min(running_drawdown)),
+            "best_terminal": float(np.max(paths[:, -1])),
+            "worst_terminal": float(np.min(paths[:, -1])),
+        }
+
+    @staticmethod
+    def summarize(paths: np.ndarray, initial: Optional[float] = None, conf: float = 0.95) -> Dict:
+        out = MonteCarlo.confidence_intervals(paths, conf)
+        out["terminal"] = MonteCarlo.terminal_stats(paths, initial=initial, conf=conf)
+        out["diagnostics"] = MonteCarlo.path_diagnostics(paths)
+        return out
+
+    @staticmethod
+    def simulate(yield_series: pd.Series, model: str = "Vasicek Mean-Reverting", days: int = 20, sims: int = 5000, conf: float = 0.95, lookback: int = 252, shock_bps: float = 0.0, shock_day: int = 1, shock_persistence: float = 1.0, seed: int = 42) -> Dict:
+        params = MonteCarlo.calibrate(yield_series, lookback=lookback)
+        initial = params["initial"]
+
+        if model == "Geometric Brownian Motion":
+            paths = MonteCarlo.gbm(initial, params["mu"], params["sigma_pct"], days, sims, seed=seed)
+            model_short = "GBM"
+        elif model == "Jump Diffusion":
+            paths = MonteCarlo.jump_diffusion(
+                initial, params["mu"], params["sigma_pct"], params["jump_lambda"],
+                params["jump_mean"], params["jump_std"], days, sims, seed=seed
+            )
+            model_short = "Jump Diffusion"
+        elif model == "Ornstein-Uhlenbeck":
+            paths = MonteCarlo.ornstein_uhlenbeck(initial, params["kappa"], params["theta"], params["sigma_abs"], days, sims, seed=seed)
+            model_short = "OU"
+        else:
+            paths = MonteCarlo.vasicek(initial, params["kappa"], params["theta"], params["sigma_abs"], days, sims, seed=seed)
+            model_short = "Vasicek"
+
+        shocked_paths = MonteCarlo.apply_shock(paths, shock_bps=shock_bps, shock_day=shock_day, persistence=shock_persistence)
+        summary = MonteCarlo.summarize(shocked_paths, initial=initial, conf=conf)
+        summary["paths"] = shocked_paths
+        summary["params"] = params
+        summary["model_name"] = model_short
+        summary["confidence"] = conf
+        summary["days"] = days
+        summary["sims"] = sims
+        return summary
+
     @staticmethod
     def var(paths: np.ndarray, conf: float = 0.95) -> float:
-        """
-        Calculate Value at Risk from simulation paths
-        
-        Parameters
-        ----------
-        paths : np.ndarray
-            Simulation paths
-        conf : float
-            Confidence level (default 0.95)
-        
-        Returns
-        -------
-        float
-            Value at Risk at the specified confidence level
-        """
-        return np.percentile(paths[:, -1], (1 - conf) * 100)
-    
+        return float(np.percentile(paths[:, -1], (1 - conf) * 100))
+
     @staticmethod
     def cvar(paths: np.ndarray, conf: float = 0.95) -> float:
-        """
-        Calculate Conditional Value at Risk (Expected Shortfall)
-        
-        Parameters
-        ----------
-        paths : np.ndarray
-            Simulation paths
-        conf : float
-            Confidence level (default 0.95)
-        
-        Returns
-        -------
-        float
-            Conditional Value at Risk
-        """
         var = MonteCarlo.var(paths, conf)
-        return np.mean(paths[:, -1][paths[:, -1] <= var])
+        terminal = paths[:, -1]
+        tail = terminal[terminal <= var]
+        return float(np.mean(tail)) if tail.size else float(var)
 
 
 # =============================================================================

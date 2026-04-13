@@ -209,27 +209,57 @@ def fetch_market_data(ticker: str, start_date: str, end_date: str) -> pd.Series:
 @st.cache_data(ttl=CFG.cache_ttl_sec, show_spinner=False)
 def fetch_ohlc_data(ticker: str, period: str = "2y") -> Optional[pd.DataFrame]:
     """
-    Fetch OHLC data from Yahoo Finance for technical analysis
-    
-    Parameters
-    ----------
-    ticker : str
-        Yahoo Finance ticker symbol
-    period : str
-        Data period (e.g., "1y", "2y", "5y")
-    
-    Returns
-    -------
-    pd.DataFrame or None
-        OHLC DataFrame with columns: Open, High, Low, Close, Volume
+    Fetch normalized OHLC data from Yahoo Finance for technical analysis.
+
+    Returns a flat, numeric DataFrame with Open/High/Low/Close/Volume columns.
+    This guards against yfinance MultiIndex outputs that can break Streamlit
+    metrics and downstream technical-indicator code.
     """
     if not YFINANCE_AVAILABLE:
         return None
-    
+
     try:
-        data = yf.download(ticker, period=period, progress=False, auto_adjust=False)
+        data = yf.download(
+            ticker,
+            period=period,
+            progress=False,
+            auto_adjust=False,
+            group_by="column",
+            threads=False,
+        )
         if data is None or data.empty:
             return None
+
+        if isinstance(data.columns, pd.MultiIndex):
+            tickers = data.columns.get_level_values(-1)
+            if ticker in tickers:
+                data = data.xs(ticker, axis=1, level=-1, drop_level=True)
+            else:
+                data.columns = data.columns.get_level_values(0)
+
+        if data.columns.duplicated().any():
+            data = data.loc[:, ~data.columns.duplicated()]
+
+        if "Close" not in data.columns and "Adj Close" in data.columns:
+            data["Close"] = data["Adj Close"]
+
+        required = ["Open", "High", "Low", "Close", "Volume"]
+        keep = [c for c in ["Open", "High", "Low", "Close", "Adj Close", "Volume"] if c in data.columns]
+        data = data[keep].copy()
+
+        for col in [c for c in required if c in data.columns]:
+            data[col] = pd.to_numeric(data[col], errors="coerce")
+
+        if not all(c in data.columns for c in required):
+            return None
+
+        data = data.dropna(subset=["Open", "High", "Low", "Close"])
+        if data.empty:
+            return None
+
+        if getattr(data.index, "tz", None) is not None:
+            data.index = data.index.tz_localize(None)
+
         return data
     except Exception:
         return None
