@@ -1,6 +1,6 @@
 """
 Yield Curve Institutional Platform - Main Application Entry Point
-Version 37.1 - Fully Functional with Visible Technical Charts
+Version 37.2 - Fully Functional with All Fixes
 
 This is the main Streamlit application that orchestrates all modules.
 Run with: streamlit run app.py
@@ -47,39 +47,43 @@ def safe_series_value(series: pd.Series, default: float = 0.0) -> float:
         return default
 
 
+def safe_float_from_series(value, default: float = 0.0) -> float:
+    """Safely convert a value to float, handling pandas Series and NaN values"""
+    if value is None:
+        return default
+    if isinstance(value, pd.Series):
+        if value.empty:
+            return default
+        try:
+            val = value.iloc[-1]
+            if pd.isna(val):
+                return default
+            return float(val)
+        except Exception:
+            return default
+    if isinstance(value, (int, float)):
+        if np.isnan(value):
+            return default
+        return float(value)
+    return default
+
+
 def safe_correlation(series1: pd.Series, series2: pd.Series) -> Optional[float]:
-    """
-    Safely calculate correlation between two pandas Series
-    
-    Parameters
-    ----------
-    series1 : pd.Series
-        First time series
-    series2 : pd.Series
-        Second time series
-    
-    Returns
-    -------
-    float or None
-        Correlation value or None if calculation fails
-    """
+    """Safely calculate correlation between two pandas Series"""
     if series1 is None or series2 is None:
         return None
     if series1.empty or series2.empty:
         return None
     
     try:
-        # Create a DataFrame with both series and drop NaN values
         df = pd.DataFrame({
             'series1': series1,
             'series2': series2
         }).dropna()
         
-        # Need at least 3 observations for meaningful correlation
         if df.empty or len(df) < 3:
             return None
         
-        # Calculate correlation using numpy for better control
         corr_matrix = np.corrcoef(df['series1'].values, df['series2'].values)
         corr_value = corr_matrix[0, 1]
         
@@ -558,22 +562,50 @@ def main():
                     # Add technical indicators
                     tech_df = add_technical_indicators(tech_df)
                     
+                    # SAFELY extract current price
+                    if "Close" in tech_df.columns and not tech_df["Close"].empty:
+                        current_price_val = tech_df["Close"].iloc[-1]
+                        if pd.isna(current_price_val):
+                            current_price = 0.0
+                        else:
+                            current_price = float(current_price_val)
+                    else:
+                        current_price = 0.0
+                    
+                    # SAFELY extract SMA values
+                    if "SMA_20" in tech_df.columns and not tech_df["SMA_20"].empty:
+                        sma20_val = tech_df["SMA_20"].iloc[-1]
+                        sma20 = float(sma20_val) if not pd.isna(sma20_val) else 0.0
+                    else:
+                        sma20 = 0.0
+                    
+                    if "SMA_50" in tech_df.columns and not tech_df["SMA_50"].empty:
+                        sma50_val = tech_df["SMA_50"].iloc[-1]
+                        sma50 = float(sma50_val) if not pd.isna(sma50_val) else 0.0
+                    else:
+                        sma50 = 0.0
+                    
+                    # SAFELY calculate 1D change
+                    if len(tech_df) > 1 and "Close" in tech_df.columns:
+                        close_vals = tech_df["Close"].dropna()
+                        if len(close_vals) >= 2:
+                            change_1d = (close_vals.iloc[-1] - close_vals.iloc[-2]) / close_vals.iloc[-2] * 100
+                            change_1d = float(change_1d) if not pd.isna(change_1d) else 0.0
+                        else:
+                            change_1d = 0.0
+                    else:
+                        change_1d = 0.0
+                    
                     # Display current price info
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        current_price = tech_df["Close"].iloc[-1]
-                        st.metric("Current Price", f"${current_price:.2f}")
+                        st.metric("Current Price", f"${current_price:.2f}" if current_price > 0 else "N/A")
                     with col2:
-                        change_1d = tech_df["Close"].pct_change().iloc[-1] * 100
                         st.metric("1D Change", f"{change_1d:+.2f}%", delta=f"{change_1d:+.2f}%")
                     with col3:
-                        if "SMA_20" in tech_df.columns:
-                            sma20 = tech_df["SMA_20"].iloc[-1]
-                            st.metric("SMA 20", f"${sma20:.2f}")
+                        st.metric("SMA 20", f"${sma20:.2f}" if sma20 > 0 else "N/A")
                     with col4:
-                        if "SMA_50" in tech_df.columns:
-                            sma50 = tech_df["SMA_50"].iloc[-1]
-                            st.metric("SMA 50", f"${sma50:.2f}")
+                        st.metric("SMA 50", f"${sma50:.2f}" if sma50 > 0 else "N/A")
                     
                     # Generate technical signals
                     signals = get_technical_signals(tech_df)
